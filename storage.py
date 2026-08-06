@@ -12,6 +12,41 @@ DB_PATH = Path(os.environ.get("DB_PATH", "data/bot.db"))
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
+NEW_COLUMNS = {"id", "user_id", "name", "note", "sub_url", "configs"}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """جدول‌های نسخه‌ی قدیمی (تک-اشتراکی، بدون name/note) رو به اسکیمای جدید مهاجرت می‌ده."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(subs)").fetchall()}
+    if not existing:
+        return  # جدول هنوز ساخته نشده، پایین‌تر با CREATE TABLE ساخته میشه
+    if NEW_COLUMNS.issubset(existing):
+        return  # اسکیما از قبل جدیده
+
+    conn.execute("ALTER TABLE subs RENAME TO subs_old")
+    conn.execute(
+        """CREATE TABLE subs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            note TEXT,
+            sub_url TEXT NOT NULL,
+            configs TEXT NOT NULL
+        )"""
+    )
+
+    if {"user_id", "sub_url", "configs"}.issubset(existing):
+        old_rows = conn.execute("SELECT user_id, sub_url, configs FROM subs_old").fetchall()
+        for i, (user_id, sub_url, configs) in enumerate(old_rows, start=1):
+            conn.execute(
+                "INSERT INTO subs (user_id, name, note, sub_url, configs) VALUES (?, ?, ?, ?, ?)",
+                (user_id, f"اشتراک {i}", "", sub_url, configs),
+            )
+
+    conn.execute("DROP TABLE subs_old")
+    conn.commit()
+
+
 def _conn():
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
@@ -24,6 +59,7 @@ def _conn():
             configs TEXT NOT NULL
         )"""
     )
+    _migrate(conn)
     return conn
 
 
