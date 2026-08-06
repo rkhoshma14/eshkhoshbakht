@@ -1,6 +1,7 @@
 """
-ذخیره‌سازی ساده با SQLite. برای پایداری روی Railway، این مسیر رو
-باید روی یک Volume مانت کنی (مثلا /app/data)، وگرنه با هر دیپلوی جدید پاک میشه.
+ذخیره‌سازی چند اشتراک برای هر کاربر، با SQLite.
+برای پایداری روی Railway، این مسیر رو باید روی یک Volume مانت کنی (مثلا /app/data)،
+وگرنه با هر دیپلوی جدید پاک میشه.
 """
 import json
 import os
@@ -15,32 +16,82 @@ def _conn():
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         """CREATE TABLE IF NOT EXISTS subs (
-            user_id INTEGER PRIMARY KEY,
-            sub_url TEXT,
-            configs TEXT
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            note TEXT,
+            sub_url TEXT NOT NULL,
+            configs TEXT NOT NULL
         )"""
     )
     return conn
 
 
-def save_sub(user_id: int, sub_url: str, configs: list[str]) -> None:
+def add_sub(user_id: int, name: str, note: str, sub_url: str, configs: list[str]) -> int:
+    conn = _conn()
+    cur = conn.execute(
+        "INSERT INTO subs (user_id, name, note, sub_url, configs) VALUES (?, ?, ?, ?, ?)",
+        (user_id, name, note, sub_url, json.dumps(configs)),
+    )
+    conn.commit()
+    sub_id = cur.lastrowid
+    conn.close()
+    return sub_id
+
+
+def list_subs(user_id: int) -> list[dict]:
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT id, name, note, sub_url, configs FROM subs WHERE user_id=? ORDER BY id",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    result = []
+    for sub_id, name, note, sub_url, configs_json in rows:
+        configs = json.loads(configs_json)
+        result.append(
+            {
+                "id": sub_id,
+                "name": name,
+                "note": note or "",
+                "sub_url": sub_url,
+                "config_count": len(configs),
+            }
+        )
+    return result
+
+
+def get_sub(sub_id: int, user_id: int) -> dict | None:
+    conn = _conn()
+    row = conn.execute(
+        "SELECT id, name, note, sub_url, configs FROM subs WHERE id=? AND user_id=?",
+        (sub_id, user_id),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    sid, name, note, sub_url, configs_json = row
+    return {
+        "id": sid,
+        "name": name,
+        "note": note or "",
+        "sub_url": sub_url,
+        "configs": json.loads(configs_json),
+    }
+
+
+def update_configs(sub_id: int, user_id: int, configs: list[str]) -> None:
     conn = _conn()
     conn.execute(
-        """INSERT INTO subs (user_id, sub_url, configs) VALUES (?, ?, ?)
-           ON CONFLICT(user_id) DO UPDATE SET sub_url=excluded.sub_url, configs=excluded.configs""",
-        (user_id, sub_url, json.dumps(configs)),
+        "UPDATE subs SET configs=? WHERE id=? AND user_id=?",
+        (json.dumps(configs), sub_id, user_id),
     )
     conn.commit()
     conn.close()
 
 
-def get_sub(user_id: int):
+def delete_sub(sub_id: int, user_id: int) -> None:
     conn = _conn()
-    row = conn.execute(
-        "SELECT sub_url, configs FROM subs WHERE user_id=?", (user_id,)
-    ).fetchone()
+    conn.execute("DELETE FROM subs WHERE id=? AND user_id=?", (sub_id, user_id))
+    conn.commit()
     conn.close()
-    if not row:
-        return None, []
-    sub_url, configs_json = row
-    return sub_url, json.loads(configs_json)
