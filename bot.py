@@ -35,6 +35,7 @@ BTN_BACK = "« بازگشت به اشتراک‌ها"
 BTN_REFRESH = "🔄 بروزرسانی"
 BTN_PING = "📶 پینگ کانفیگ‌ها"
 BTN_EDIT_NOTE = "📝 یادداشت"
+BTN_DELETE = "🗑 حذف اشتراک"
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -129,6 +130,7 @@ def build_configs_keyboard(sub_id: int, configs: list[str], page: int = 0) -> In
             InlineKeyboardButton(text=BTN_BACK, callback_data="subs_back"),
         ]
     )
+    rows.append([InlineKeyboardButton(text=BTN_DELETE, callback_data=f"sub_delete:{sub_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -312,20 +314,28 @@ async def ask_edit_note(callback: CallbackQuery, state: FSMContext):
     await state.update_data(sub_id=sub_id)
     await state.set_state(EditNoteState.waiting_for_note)
     kb = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="🗑 حذف یادداشت", callback_data="note_clear")]]
+        inline_keyboard=[[InlineKeyboardButton(text="🗑 حذف کامل یادداشت", callback_data="note_clear")]]
     )
-    current = f"\n\nیادداشت فعلی: {escape(sub['note'])}" if sub["note"] else ""
-    await callback.message.answer(
-        f"یادداشت جدید برای «{escape(sub['name'])}» رو بفرست:{current}",
-        reply_markup=kb,
-        parse_mode="HTML",
-    )
+    if sub["note"]:
+        prompt = (
+            f"چیزی که بفرستی به یادداشت فعلی «{escape(sub['name'])}» اضافه میشه (پاک نمیشه):\n\n"
+            f"📝 یادداشت فعلی:\n{escape(sub['note'])}"
+        )
+    else:
+        prompt = f"یادداشت برای «{escape(sub['name'])}» رو بفرست:"
+    await callback.message.answer(prompt, reply_markup=kb, parse_mode="HTML")
     await callback.answer()
 
 
-async def _save_note_and_show(user_id: int, state: FSMContext, note: str, send_via) -> None:
+async def _save_note_and_show(user_id: int, state: FSMContext, note: str, send_via, append: bool = False) -> None:
     data = await state.get_data()
     sub_id = data["sub_id"]
+
+    if append:
+        existing = storage.get_sub(sub_id, user_id)
+        if existing and existing["note"]:
+            note = f"{existing['note']}\n{note}"
+
     storage.update_note(sub_id, user_id, note)
     await state.clear()
 
@@ -341,7 +351,7 @@ async def receive_edited_note(message: Message, state: FSMContext):
         return
 
     note = message.text.strip()
-    await _save_note_and_show(message.from_user.id, state, note, message.answer)
+    await _save_note_and_show(message.from_user.id, state, note, message.answer, append=True)
 
 
 @dp.callback_query(F.data == "note_clear", EditNoteState.waiting_for_note)
@@ -396,6 +406,66 @@ async def ping_sub(callback: CallbackQuery):
     await status.edit_text(chunks[0], parse_mode="HTML")
     for chunk in chunks[1:]:
         await callback.message.answer(chunk, parse_mode="HTML")
+
+
+# ---------- حذف اشتراک ----------
+
+@dp.callback_query(F.data.startswith("sub_delete:"))
+async def confirm_delete(callback: CallbackQuery):
+    sub_id = int(callback.data.split(":")[1])
+    sub = storage.get_sub(sub_id, callback.from_user.id)
+    if not sub:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ بله، حذف کن", callback_data=f"sub_delete_yes:{sub_id}"),
+                InlineKeyboardButton(text="❌ انصراف", callback_data=f"sub_delete_no:{sub_id}"),
+            ]
+        ]
+    )
+    await callback.message.edit_text(
+        f"مطمئنی می‌خوای اشتراک «{escape(sub['name'])}» با {len(sub['configs'])} کانفیگ حذف بشه؟"
+        "\nاین کار قابل بازگشت نیست.",
+        reply_markup=kb,
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("sub_delete_yes:"))
+async def do_delete(callback: CallbackQuery):
+    sub_id = int(callback.data.split(":")[1])
+    sub = storage.get_sub(sub_id, callback.from_user.id)
+    if not sub:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+
+    storage.delete_sub(sub_id, callback.from_user.id)
+
+    subs = storage.list_subs(callback.from_user.id)
+    if subs:
+        await callback.message.edit_text(
+            f"اشتراک «{escape(sub['name'])}» حذف شد.\n\nیکی از اشتراک‌ها رو انتخاب کن:",
+            reply_markup=build_subs_keyboard(subs),
+        )
+    else:
+        await callback.message.edit_text(
+            f"اشتراک «{escape(sub['name'])}» حذف شد.\n\nهیچ اشتراکی نداری. از دکمه «{BTN_ADD_SUB}» استفاده کن."
+        )
+    await callback.answer("حذف شد.")
+
+
+@dp.callback_query(F.data.startswith("sub_delete_no:"))
+async def cancel_delete(callback: CallbackQuery):
+    sub_id = int(callback.data.split(":")[1])
+    sub = storage.get_sub(sub_id, callback.from_user.id)
+    if not sub:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+
+    await callback.message.edit_text(
+        sub_detail_text(sub), reply_markup=build_configs_keyboard(sub_id, sub["configs"]), parse_mode="HTML"
+    )
+    await callback.answer("انصراف داده شد.")
 
 
 # ---------- انتخاب و رنیم کانفیگ ----------
