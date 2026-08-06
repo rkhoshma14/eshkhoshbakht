@@ -28,6 +28,12 @@ def decode_subscription(content: str) -> list[str]:
     return lines
 
 
+def encode_subscription(configs: list[str]) -> str:
+    """لیست کانفیگ‌ها رو به یک رشته base64 (لینک اشتراک) تبدیل می‌کنه."""
+    body = "\n".join(configs)
+    return base64.b64encode(body.encode("utf-8")).decode("utf-8")
+
+
 def get_protocol(raw: str) -> str:
     return raw.split("://", 1)[0] if "://" in raw else "unknown"
 
