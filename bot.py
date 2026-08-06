@@ -34,6 +34,7 @@ BTN_NOTE_SKIP = "بدون یادداشت"
 BTN_BACK = "« بازگشت به اشتراک‌ها"
 BTN_REFRESH = "🔄 بروزرسانی"
 BTN_PING = "📶 پینگ کانفیگ‌ها"
+BTN_EDIT_NOTE = "📝 یادداشت"
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -45,8 +46,30 @@ class AddSubState(StatesGroup):
     waiting_for_note = State()
 
 
+class EditNoteState(StatesGroup):
+    waiting_for_note = State()
+
+
 class RenameState(StatesGroup):
     waiting_for_name = State()
+
+
+MENU_BUTTONS = {BTN_ADD_SUB, BTN_LIST}
+
+
+async def bail_if_menu_button(message: Message, state: FSMContext) -> bool:
+    """اگه کاربر وسط یه مرحله (مثل وارد کردن یادداشت/اسم/لینک) دکمه‌ی منو رو بزنه،
+    باید همون دکمه اجرا بشه نه اینکه متنش به عنوان ورودی همون مرحله ذخیره بشه.
+    این تابع state فعلی رو پاک می‌کنه و دکمه‌ی زده‌شده رو درست اجرا می‌کنه."""
+    if message.text not in MENU_BUTTONS:
+        return False
+
+    await state.clear()
+    if message.text == BTN_ADD_SUB:
+        await ask_for_link(message, state)
+    elif message.text == BTN_LIST:
+        await list_subs(message)
+    return True
 
 
 def is_admin(user_id: int) -> bool:
@@ -99,6 +122,7 @@ def build_configs_keyboard(sub_id: int, configs: list[str], page: int = 0) -> In
         rows.append(nav)
 
     rows.append([InlineKeyboardButton(text=BTN_PING, callback_data=f"sub_ping:{sub_id}")])
+    rows.append([InlineKeyboardButton(text=BTN_EDIT_NOTE, callback_data=f"sub_note:{sub_id}")])
     rows.append(
         [
             InlineKeyboardButton(text=BTN_REFRESH, callback_data=f"sub_refresh:{sub_id}"),
@@ -149,6 +173,9 @@ async def ask_for_link(message: Message, state: FSMContext):
 
 @dp.message(AddSubState.waiting_for_link)
 async def receive_link(message: Message, state: FSMContext):
+    if await bail_if_menu_button(message, state):
+        return
+
     sub_url = message.text.strip()
     status = await message.answer("در حال بررسی لینک...")
     ok, result = await fetch_configs(sub_url)
@@ -163,6 +190,9 @@ async def receive_link(message: Message, state: FSMContext):
 
 @dp.message(AddSubState.waiting_for_name)
 async def receive_name(message: Message, state: FSMContext):
+    if await bail_if_menu_button(message, state):
+        return
+
     name = message.text.strip()
     await state.update_data(name=name)
     await state.set_state(AddSubState.waiting_for_note)
@@ -181,6 +211,9 @@ async def _finish_add_sub(user_id: int, state: FSMContext, note: str) -> str:
 
 @dp.message(AddSubState.waiting_for_note)
 async def receive_note(message: Message, state: FSMContext):
+    if await bail_if_menu_button(message, state):
+        return
+
     note = message.text.strip()
     text = await _finish_add_sub(message.from_user.id, state, note)
     await message.answer(text, reply_markup=main_menu())
@@ -267,6 +300,57 @@ async def refresh_sub(callback: CallbackQuery):
     )
 
 
+# ---------- ویرایش یادداشت (هروقت بخوای) ----------
+
+@dp.callback_query(F.data.startswith("sub_note:"))
+async def ask_edit_note(callback: CallbackQuery, state: FSMContext):
+    sub_id = int(callback.data.split(":")[1])
+    sub = storage.get_sub(sub_id, callback.from_user.id)
+    if not sub:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+
+    await state.update_data(sub_id=sub_id)
+    await state.set_state(EditNoteState.waiting_for_note)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="🗑 حذف یادداشت", callback_data="note_clear")]]
+    )
+    current = f"\n\nیادداشت فعلی: {escape(sub['note'])}" if sub["note"] else ""
+    await callback.message.answer(
+        f"یادداشت جدید برای «{escape(sub['name'])}» رو بفرست:{current}",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+async def _save_note_and_show(user_id: int, state: FSMContext, note: str, send_via) -> None:
+    data = await state.get_data()
+    sub_id = data["sub_id"]
+    storage.update_note(sub_id, user_id, note)
+    await state.clear()
+
+    sub = storage.get_sub(sub_id, user_id)
+    await send_via(
+        sub_detail_text(sub), reply_markup=build_configs_keyboard(sub_id, sub["configs"]), parse_mode="HTML"
+    )
+
+
+@dp.message(EditNoteState.waiting_for_note)
+async def receive_edited_note(message: Message, state: FSMContext):
+    if await bail_if_menu_button(message, state):
+        return
+
+    note = message.text.strip()
+    await _save_note_and_show(message.from_user.id, state, note, message.answer)
+
+
+@dp.callback_query(F.data == "note_clear", EditNoteState.waiting_for_note)
+async def clear_note(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await _save_note_and_show(callback.from_user.id, state, "", callback.message.answer)
+    await callback.answer("یادداشت حذف شد.")
+
+
 # ---------- پینگ کانفیگ‌ها ----------
 
 def _format_ping_lines(sub_name: str, configs: list[str], results: dict[int, float | None]) -> list[str]:
@@ -332,6 +416,9 @@ async def pick_config(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(RenameState.waiting_for_name)
 async def do_rename(message: Message, state: FSMContext):
+    if await bail_if_menu_button(message, state):
+        return
+
     data = await state.get_data()
     sub_id, idx = data["sub_id"], data["config_index"]
     sub = storage.get_sub(sub_id, message.from_user.id)

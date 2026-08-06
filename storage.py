@@ -90,6 +90,16 @@ def update_configs(sub_id: int, user_id: int, configs: list[str]) -> None:
     conn.close()
 
 
+def update_note(sub_id: int, user_id: int, note: str) -> None:
+    conn = _conn()
+    conn.execute(
+        "UPDATE subs SET note=? WHERE id=? AND user_id=?",
+        (note, sub_id, user_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 def delete_sub(sub_id: int, user_id: int) -> None:
     conn = _conn()
     conn.execute("DELETE FROM subs WHERE id=? AND user_id=?", (sub_id, user_id))
