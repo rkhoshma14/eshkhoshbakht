@@ -20,6 +20,7 @@ from aiogram.types import (
 
 import storage
 from config_parser import decode_subscription, get_protocol, get_remark, rename_config
+from pinger import ping_configs
 
 logging.basicConfig(level=logging.INFO)
 
@@ -32,6 +33,7 @@ BTN_LIST = "📋 لیست اشتراک‌ها"
 BTN_NOTE_SKIP = "بدون یادداشت"
 BTN_BACK = "« بازگشت به اشتراک‌ها"
 BTN_REFRESH = "🔄 بروزرسانی"
+BTN_PING = "📶 پینگ کانفیگ‌ها"
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -96,6 +98,7 @@ def build_configs_keyboard(sub_id: int, configs: list[str], page: int = 0) -> In
     if nav:
         rows.append(nav)
 
+    rows.append([InlineKeyboardButton(text=BTN_PING, callback_data=f"sub_ping:{sub_id}")])
     rows.append(
         [
             InlineKeyboardButton(text=BTN_REFRESH, callback_data=f"sub_refresh:{sub_id}"),
@@ -262,6 +265,53 @@ async def refresh_sub(callback: CallbackQuery):
     await callback.message.edit_text(
         sub_detail_text(sub), reply_markup=build_configs_keyboard(sub_id, result), parse_mode="HTML"
     )
+
+
+# ---------- پینگ کانفیگ‌ها ----------
+
+def _format_ping_lines(sub_name: str, configs: list[str], results: dict[int, float | None]) -> list[str]:
+    rows = []
+    for i, raw in enumerate(configs):
+        remark = get_remark(raw) or "(بدون نام)"
+        proto = get_protocol(raw)
+        ms = results.get(i)
+        rows.append((i, proto, remark, ms))
+
+    rows.sort(key=lambda r: (r[3] is None, r[3] if r[3] is not None else 0))
+
+    lines = [f"📶 نتیجه پینگ «{escape(sub_name)}»:\n"]
+    for i, proto, remark, ms in rows:
+        status = f"{ms:.0f} ms" if ms is not None else "❌ تایم‌اوت"
+        lines.append(f"{i + 1}. [{proto}] {escape(remark[:28])} — {status}")
+
+    # تقسیم به چند پیام اگه از حد تلگرام بیشتر بود
+    chunks, current = [], ""
+    for line in lines:
+        if len(current) + len(line) + 1 > 3500:
+            chunks.append(current)
+            current = ""
+        current += line + "\n"
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+@dp.callback_query(F.data.startswith("sub_ping:"))
+async def ping_sub(callback: CallbackQuery):
+    sub_id = int(callback.data.split(":")[1])
+    sub = storage.get_sub(sub_id, callback.from_user.id)
+    if not sub:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+
+    await callback.answer()
+    status = await callback.message.answer(f"در حال پینگ {len(sub['configs'])} کانفیگ...")
+
+    results = await ping_configs(sub["configs"])
+    chunks = _format_ping_lines(sub["name"], sub["configs"], results)
+
+    await status.edit_text(chunks[0], parse_mode="HTML")
+    for chunk in chunks[1:]:
+        await callback.message.answer(chunk, parse_mode="HTML")
 
 
 # ---------- انتخاب و رنیم کانفیگ ----------

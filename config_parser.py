@@ -4,7 +4,8 @@
 """
 import base64
 import json
-from urllib.parse import quote, unquote
+import re
+from urllib.parse import quote, unquote, urlparse
 
 
 def _b64decode(s: str) -> bytes:
@@ -45,6 +46,40 @@ def get_remark(raw: str) -> str:
         except Exception:
             return raw.split("#", 1)[1]
     return ""
+
+
+def get_host_port(raw: str) -> tuple[str, int] | None:
+    """آدرس سرور و پورت رو از یک کانفیگ خام استخراج می‌کنه (برای تست پینگ)."""
+    if raw.startswith("vmess://"):
+        try:
+            data = json.loads(_b64decode(raw[len("vmess://"):]))
+            host = data.get("add")
+            port = int(data.get("port"))
+            if host and port:
+                return host, port
+        except Exception:
+            pass
+        return None
+
+    try:
+        parsed = urlparse(raw)
+        if parsed.hostname and parsed.port:
+            return parsed.hostname, parsed.port
+    except Exception:
+        pass
+
+    # فرمت قدیمی ss:// که همه چیز قبل از # به صورت base64 هست
+    if raw.startswith("ss://"):
+        try:
+            body = raw[len("ss://"):].split("#", 1)[0]
+            decoded = _b64decode(body).decode("utf-8", errors="ignore")
+            m = re.search(r"@([^:/?#]+):(\d+)", decoded)
+            if m:
+                return m.group(1), int(m.group(2))
+        except Exception:
+            pass
+
+    return None
 
 
 def rename_config(raw: str, new_name: str) -> str:
