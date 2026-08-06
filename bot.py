@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from html import escape
 
 import httpx
@@ -19,7 +20,7 @@ from aiogram.types import (
 )
 
 import storage
-from config_parser import decode_subscription, get_protocol, get_remark, rename_config
+from config_parser import decode_subscription, encode_subscription, get_protocol, get_remark, rename_config
 from pinger import ping_configs
 
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +37,8 @@ BTN_REFRESH = "🔄 بروزرسانی"
 BTN_PING = "📶 پینگ کانفیگ‌ها"
 BTN_EDIT_NOTE = "📝 یادداشت"
 BTN_DELETE = "🗑 حذف اشتراک"
+BTN_EXPORT = "📤 خروجی اشتراک"
+BTN_DELETE_DEAD = "🧹 حذف کانفیگ‌های مرده"
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -85,6 +88,19 @@ def main_menu() -> ReplyKeyboardMarkup:
     )
 
 
+def _format_updated_at(iso_str: str) -> str:
+    """زمان ISO رو به فرمت خوانا تبدیل می‌کنه (به وقت ایران تقریبی)."""
+    if not iso_str:
+        return "نامشخص"
+    try:
+        dt = datetime.fromisoformat(iso_str)
+        # تبدیل تقریبی به وقت ایران (UTC+3:30)
+        tehran = dt + timedelta(hours=3, minutes=30)
+        return tehran.strftime("%Y/%m/%d  %H:%M")
+    except Exception:
+        return iso_str[:16]
+
+
 def build_subs_keyboard(subs: list[dict], page: int = 0) -> InlineKeyboardMarkup:
     start = page * PAGE_SIZE
     chunk = subs[start : start + PAGE_SIZE]
@@ -122,8 +138,21 @@ def build_configs_keyboard(sub_id: int, configs: list[str], page: int = 0) -> In
     if nav:
         rows.append(nav)
 
-    rows.append([InlineKeyboardButton(text=BTN_PING, callback_data=f"sub_ping:{sub_id}")])
-    rows.append([InlineKeyboardButton(text=BTN_EDIT_NOTE, callback_data=f"sub_note:{sub_id}")])
+    # ردیف پینگ و حذف مرده‌ها
+    rows.append(
+        [
+            InlineKeyboardButton(text=BTN_PING, callback_data=f"sub_ping:{sub_id}"),
+            InlineKeyboardButton(text=BTN_DELETE_DEAD, callback_data=f"sub_delete_dead:{sub_id}"),
+        ]
+    )
+    # ردیف خروجی و یادداشت
+    rows.append(
+        [
+            InlineKeyboardButton(text=BTN_EXPORT, callback_data=f"sub_export:{sub_id}"),
+            InlineKeyboardButton(text=BTN_EDIT_NOTE, callback_data=f"sub_note:{sub_id}"),
+        ]
+    )
+    # ردیف بروزرسانی و بازگشت
     rows.append(
         [
             InlineKeyboardButton(text=BTN_REFRESH, callback_data=f"sub_refresh:{sub_id}"),
@@ -136,8 +165,10 @@ def build_configs_keyboard(sub_id: int, configs: list[str], page: int = 0) -> In
 
 def sub_detail_text(sub: dict) -> str:
     text = f"📦 <b>{escape(sub['name'])}</b>\n"
-    if sub["note"]:
+    if sub.get("note"):
         text += f"📝 {escape(sub['note'])}\n"
+    updated = _format_updated_at(sub.get("updated_at", ""))
+    text += f"🕒 آخرین بروزرسانی: {updated}\n"
     text += f"\n{len(sub['configs'])} کانفیگ — یکی رو انتخاب کن:"
     return text
 
@@ -296,10 +327,46 @@ async def refresh_sub(callback: CallbackQuery):
         return await callback.message.answer(result)
 
     storage.update_configs(sub_id, callback.from_user.id, result)
-    sub["configs"] = result
+    sub = storage.get_sub(sub_id, callback.from_user.id)  # برای گرفتن updated_at جدید
     await callback.message.edit_text(
         sub_detail_text(sub), reply_markup=build_configs_keyboard(sub_id, result), parse_mode="HTML"
     )
+
+
+# ---------- خروجی اشتراک جدید ----------
+
+@dp.callback_query(F.data.startswith("sub_export:"))
+async def export_sub(callback: CallbackQuery):
+    sub_id = int(callback.data.split(":")[1])
+    sub = storage.get_sub(sub_id, callback.from_user.id)
+    if not sub:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+
+    if not sub["configs"]:
+        return await callback.answer("هیچ کانفیگی برای خروجی وجود نداره.", show_alert=True)
+
+    encoded = encode_subscription(sub["configs"])
+    text = (
+        f"📤 <b>خروجی اشتراک «{escape(sub['name'])}»</b>\n"
+        f"تعداد کانفیگ: {len(sub['configs'])}\n\n"
+        f"<code>{encoded}</code>"
+    )
+    # اگر خیلی طولانی بود، به چند پیام تقسیم می‌کنیم
+    if len(text) > 4000:
+        await callback.message.answer(
+            f"📤 خروجی اشتراک «{escape(sub['name'])}» ({len(sub['configs'])} کانفیگ):\n\n"
+            f"<code>{encoded[:3500]}</code>",
+            parse_mode="HTML",
+        )
+        remaining = encoded[3500:]
+        while remaining:
+            chunk = remaining[:3500]
+            remaining = remaining[3500:]
+            await callback.message.answer(f"<code>{chunk}</code>", parse_mode="HTML")
+    else:
+        await callback.message.answer(text, parse_mode="HTML")
+
+    await callback.answer("خروجی آماده شد ✅")
 
 
 # ---------- ویرایش یادداشت (هروقت بخوای) ----------
@@ -408,9 +475,96 @@ async def ping_sub(callback: CallbackQuery):
         await callback.message.answer(chunk, parse_mode="HTML")
 
 
+# ---------- حذف گروهی کانفیگ‌های مرده ----------
+
+@dp.callback_query(F.data.regexp(r"^sub_delete_dead:\d+$"))
+async def delete_dead_start(callback: CallbackQuery):
+    sub_id = int(callback.data.split(":")[1])
+    sub = storage.get_sub(sub_id, callback.from_user.id)
+    if not sub:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+
+    if not sub["configs"]:
+        return await callback.answer("هیچ کانفیگی وجود نداره.", show_alert=True)
+
+    await callback.answer()
+    status = await callback.message.answer(f"در حال پینگ {len(sub['configs'])} کانفیگ برای پیدا کردن مرده‌ها...")
+
+    results = await ping_configs(sub["configs"])
+    dead_indices = [i for i, ms in results.items() if ms is None]
+
+    if not dead_indices:
+        await status.edit_text("✅ همه کانفیگ‌ها زنده‌ان! چیزی برای حذف وجود نداره.")
+        return
+
+    # ساخت لیست برای نمایش
+    lines = [f"🧹 <b>{len(dead_indices)} کانفیگ مرده</b> پیدا شد:\n"]
+    for i in dead_indices[:30]:  # حداکثر ۳۰ تا نشون بده
+        remark = get_remark(sub["configs"][i]) or "(بدون نام)"
+        proto = get_protocol(sub["configs"][i])
+        lines.append(f"• [{proto}] {escape(remark[:35])}")
+    if len(dead_indices) > 30:
+        lines.append(f"... و {len(dead_indices) - 30} تا دیگه")
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"✅ حذف {len(dead_indices)} کانفیگ مرده",
+                    callback_data=f"sub_delete_dead_yes:{sub_id}",
+                )
+            ],
+            [InlineKeyboardButton(text="❌ انصراف", callback_data=f"sub_delete_dead_no:{sub_id}")],
+        ]
+    )
+    await status.edit_text("\n".join(lines), reply_markup=kb, parse_mode="HTML")
+
+
+@dp.callback_query(F.data.regexp(r"^sub_delete_dead_yes:\d+$"))
+async def delete_dead_confirm(callback: CallbackQuery):
+    sub_id = int(callback.data.split(":")[1])
+    sub = storage.get_sub(sub_id, callback.from_user.id)
+    if not sub:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+
+    await callback.answer("در حال حذف...")
+
+    # دوباره پینگ می‌کنیم تا لیست به‌روز باشه
+    results = await ping_configs(sub["configs"])
+    dead_indices = {i for i, ms in results.items() if ms is None}
+
+    if not dead_indices:
+        await callback.message.edit_text("✅ همه کانفیگ‌ها زنده‌ان! چیزی حذف نشد.")
+        return
+
+    alive_configs = [cfg for i, cfg in enumerate(sub["configs"]) if i not in dead_indices]
+    storage.update_configs(sub_id, callback.from_user.id, alive_configs)
+
+    sub = storage.get_sub(sub_id, callback.from_user.id)
+    removed = len(dead_indices)
+    await callback.message.edit_text(
+        f"✅ {removed} کانفیگ مرده حذف شد.\n\n{sub_detail_text(sub)}",
+        reply_markup=build_configs_keyboard(sub_id, sub["configs"]),
+        parse_mode="HTML",
+    )
+
+
+@dp.callback_query(F.data.regexp(r"^sub_delete_dead_no:\d+$"))
+async def delete_dead_cancel(callback: CallbackQuery):
+    sub_id = int(callback.data.split(":")[1])
+    sub = storage.get_sub(sub_id, callback.from_user.id)
+    if not sub:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+
+    await callback.message.edit_text(
+        sub_detail_text(sub), reply_markup=build_configs_keyboard(sub_id, sub["configs"]), parse_mode="HTML"
+    )
+    await callback.answer("انصراف داده شد.")
+
+
 # ---------- حذف اشتراک ----------
 
-@dp.callback_query(F.data.startswith("sub_delete:"))
+@dp.callback_query(F.data.regexp(r"^sub_delete:\d+$"))
 async def confirm_delete(callback: CallbackQuery):
     sub_id = int(callback.data.split(":")[1])
     sub = storage.get_sub(sub_id, callback.from_user.id)
@@ -433,7 +587,7 @@ async def confirm_delete(callback: CallbackQuery):
     await callback.answer()
 
 
-@dp.callback_query(F.data.startswith("sub_delete_yes:"))
+@dp.callback_query(F.data.regexp(r"^sub_delete_yes:\d+$"))
 async def do_delete(callback: CallbackQuery):
     sub_id = int(callback.data.split(":")[1])
     sub = storage.get_sub(sub_id, callback.from_user.id)
@@ -455,7 +609,7 @@ async def do_delete(callback: CallbackQuery):
     await callback.answer("حذف شد.")
 
 
-@dp.callback_query(F.data.startswith("sub_delete_no:"))
+@dp.callback_query(F.data.regexp(r"^sub_delete_no:\d+$"))
 async def cancel_delete(callback: CallbackQuery):
     sub_id = int(callback.data.split(":")[1])
     sub = storage.get_sub(sub_id, callback.from_user.id)
