@@ -5,7 +5,7 @@ from html import escape
 
 import httpx
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -13,7 +13,9 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
     Message,
+    ReplyKeyboardMarkup,
 )
 
 import storage
@@ -25,8 +27,16 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]
 ADMIN_IDS = {int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()}
 PAGE_SIZE = 8
 
+BTN_ADD_SUB = "➕ افزودن اشتراک"
+BTN_LIST = "📋 لیست کانفیگ‌ها"
+BTN_REFRESH = "🔄 بروزرسانی"
+
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
+
+
+class AddSubState(StatesGroup):
+    waiting_for_link = State()
 
 
 class RenameState(StatesGroup):
@@ -36,6 +46,16 @@ class RenameState(StatesGroup):
 def is_admin(user_id: int) -> bool:
     # اگر ADMIN_IDS خالی باشه یعنی همه اجازه دارن (برای تست). حتما پرش کن.
     return not ADMIN_IDS or user_id in ADMIN_IDS
+
+
+def main_menu() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_ADD_SUB)],
+            [KeyboardButton(text=BTN_LIST), KeyboardButton(text=BTN_REFRESH)],
+        ],
+        resize_keyboard=True,
+    )
 
 
 def build_list_keyboard(configs: list[str], page: int = 0) -> InlineKeyboardMarkup:
@@ -59,75 +79,73 @@ def build_list_keyboard(configs: list[str], page: int = 0) -> InlineKeyboardMark
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-@dp.message(CommandStart())
-async def start(message: Message):
-    await message.answer(
-        "سلام!\n\n"
-        "۱. اول لینک اشتراکت رو با این دستور بده:\n"
-        "<code>/addsub لینک_اشتراک</code>\n\n"
-        "۲. بعد با /list لیست کانفیگ‌ها رو ببین و هرکدوم رو بزن تا اسم دلخواهتو ازت بپرسه.\n\n"
-        "برای بروزرسانی لیست از /refresh استفاده کن.",
-        parse_mode="HTML",
-    )
-
-
-@dp.message(Command("addsub"))
-async def add_sub(message: Message):
-    if not is_admin(message.from_user.id):
-        return await message.answer("اجازه دسترسی نداری.")
-
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        return await message.answer("فرمت درست: /addsub لینک_اشتراک")
-
-    sub_url = parts[1].strip()
-    status = await message.answer("در حال دریافت و پردازش اشتراک...")
-
+async def fetch_and_save(user_id: int, sub_url: str) -> tuple[bool, str]:
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
             resp = await client.get(sub_url)
             resp.raise_for_status()
             configs = decode_subscription(resp.text)
     except Exception as e:
-        return await status.edit_text(f"خطا در دریافت لینک: {escape(str(e))}")
+        return False, f"خطا در دریافت لینک: {escape(str(e))}"
 
     if not configs:
-        return await status.edit_text("هیچ کانفیگی توی این اشتراک پیدا نشد.")
+        return False, "هیچ کانفیگی توی این اشتراک پیدا نشد."
 
-    storage.save_sub(message.from_user.id, sub_url, configs)
-    await status.edit_text(f"{len(configs)} کانفیگ پیدا شد. برای دیدن لیست /list رو بزن.")
+    storage.save_sub(user_id, sub_url, configs)
+    return True, f"{len(configs)} کانفیگ پیدا شد. از دکمه «{BTN_LIST}» استفاده کن."
 
 
-@dp.message(Command("refresh"))
+@dp.message(CommandStart())
+async def start(message: Message):
+    await message.answer(
+        "سلام! از دکمه‌های زیر استفاده کن:",
+        reply_markup=main_menu(),
+    )
+
+
+@dp.message(F.text == BTN_ADD_SUB)
+async def ask_for_sub(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return await message.answer("اجازه دسترسی نداری.")
+
+    await state.set_state(AddSubState.waiting_for_link)
+    await message.answer("لینک اشتراک رو بفرست:")
+
+
+@dp.message(AddSubState.waiting_for_link)
+async def receive_sub_link(message: Message, state: FSMContext):
+    sub_url = message.text.strip()
+    status = await message.answer("در حال دریافت و پردازش اشتراک...")
+    ok, text = await fetch_and_save(message.from_user.id, sub_url)
+    await status.edit_text(text)
+    if ok:
+        await state.clear()
+        await message.answer("آماده‌ست.", reply_markup=main_menu())
+    # اگه خطا خورد، توی همین state می‌مونه تا دوباره لینک درست بفرسته
+
+
+@dp.message(F.text == BTN_REFRESH)
 async def refresh(message: Message):
     if not is_admin(message.from_user.id):
         return await message.answer("اجازه دسترسی نداری.")
 
     sub_url, _ = storage.get_sub(message.from_user.id)
     if not sub_url:
-        return await message.answer("اول با /addsub یه لینک اشتراک اضافه کن.")
+        return await message.answer(f"اول از دکمه «{BTN_ADD_SUB}» یه لینک اشتراک اضافه کن.")
 
     status = await message.answer("در حال بروزرسانی...")
-    try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-            resp = await client.get(sub_url)
-            resp.raise_for_status()
-            configs = decode_subscription(resp.text)
-    except Exception as e:
-        return await status.edit_text(f"خطا: {escape(str(e))}")
-
-    storage.save_sub(message.from_user.id, sub_url, configs)
-    await status.edit_text(f"بروزرسانی شد. {len(configs)} کانفیگ.")
+    ok, text = await fetch_and_save(message.from_user.id, sub_url)
+    await status.edit_text(text if not ok else text.replace("پیدا شد", "بروزرسانی شد"))
 
 
-@dp.message(Command("list"))
+@dp.message(F.text == BTN_LIST)
 async def list_configs(message: Message):
     if not is_admin(message.from_user.id):
         return await message.answer("اجازه دسترسی نداری.")
 
     _, configs = storage.get_sub(message.from_user.id)
     if not configs:
-        return await message.answer("هنوز اشتراکی اضافه نکردی. از /addsub استفاده کن.")
+        return await message.answer(f"هنوز اشتراکی اضافه نکردی. از دکمه «{BTN_ADD_SUB}» استفاده کن.")
 
     await message.answer("یکی از کانفیگ‌ها رو انتخاب کن:", reply_markup=build_list_keyboard(configs))
 
@@ -161,7 +179,7 @@ async def do_rename(message: Message, state: FSMContext):
 
     if idx >= len(configs):
         await state.clear()
-        return await message.answer("این کانفیگ دیگه معتبر نیست، دوباره /list رو بزن.")
+        return await message.answer(f"این کانفیگ دیگه معتبر نیست، دوباره از «{BTN_LIST}» انتخاب کن.")
 
     new_name = message.text.strip()
     renamed = rename_config(configs[idx], new_name)
