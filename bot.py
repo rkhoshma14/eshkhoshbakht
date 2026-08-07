@@ -1004,6 +1004,7 @@ async def finish_custom_sub(message: Message, state: FSMContext):
 # ---------- لیست اشتراک‌های سفارشی من ----------
 
 @dp.message(F.text == BTN_MY_GENERATED)
+@dp.message(F.text == BTN_MY_GENERATED)
 async def list_my_generated(message: Message):
     if not is_admin(message.from_user.id):
         return await message.answer("اجازه دسترسی نداری.")
@@ -1015,6 +1016,10 @@ async def list_my_generated(message: Message):
             "از داخل یکی از اشتراک‌ها دکمه «🛠 ساخت اشتراک سفارشی» رو بزن."
         )
 
+    await message.answer(
+        "یکی از اشتراک‌های سفارشی رو انتخاب کن:",
+        reply_markup=build_generated_keyboard(gens),
+    )
     await message.answer(
         "یکی از اشتراک‌های سفارشی رو انتخاب کن:",
         reply_markup=build_generated_keyboard(gens),
