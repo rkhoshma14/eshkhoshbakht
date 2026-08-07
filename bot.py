@@ -6,6 +6,10 @@ from html import escape
 
 import httpx
 from aiohttp import web
+
+import auth
+import panel_api
+import panel_pages
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -656,10 +660,12 @@ async def handle_health(request: web.Request) -> web.Response:
 
 
 def create_web_app() -> web.Application:
-    app = web.Application()
+    app = web.Application(middlewares=[auth.auth_middleware])
     app.router.add_get("/sub/{token}", handle_sub)
     app.router.add_get("/health", handle_health)
     app.router.add_get("/", handle_health)
+    panel_pages.add_routes(app)
+    panel_api.add_routes(app)
     return app# ===================== Telegram Handlers =====================
 
 @dp.message(CommandStart())
@@ -1687,6 +1693,12 @@ async def do_rename(message: Message, state: FSMContext):
 # ===================== Main =====================
 
 async def main():
+    me = await bot.get_me()
+    auth.BOT_USERNAME = me.username
+    logger.info(f"Bot username: @{me.username}")
+    if not auth.panel_enabled():
+        logger.warning("ADMIN_IDS ست نشده — پنل وب غیرفعال می‌مونه.")
+
     port = int(os.environ.get("PORT", 8080))
     web_app = create_web_app()
     runner = web.AppRunner(web_app)
