@@ -5,6 +5,7 @@
 """
 import json
 import os
+import secrets
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -74,6 +75,16 @@ def _conn():
             sub_url TEXT NOT NULL,
             configs TEXT NOT NULL,
             updated_at TEXT
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS generated_subs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            token TEXT NOT NULL UNIQUE,
+            configs TEXT NOT NULL,
+            created_at TEXT NOT NULL
         )"""
     )
     _migrate(conn)
@@ -160,3 +171,70 @@ def delete_sub(sub_id: int, user_id: int) -> None:
     conn.execute("DELETE FROM subs WHERE id=? AND user_id=?", (sub_id, user_id))
     conn.commit()
     conn.close()
+
+
+# ---------- اشتراک‌های سفارشی ساخته‌شده ----------
+
+def create_generated_sub(user_id: int, name: str, configs: list[str]) -> tuple[int, str]:
+    """یک اشتراک سفارشی جدید می‌سازه و (id, token) برمی‌گردونه."""
+    token = secrets.token_urlsafe(12)
+    conn = _conn()
+    cur = conn.execute(
+        "INSERT INTO generated_subs (user_id, name, token, configs, created_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, name, token, json.dumps(configs), _now_iso()),
+    )
+    conn.commit()
+    gen_id = cur.lastrowid
+    conn.close()
+    return gen_id, token
+
+
+def get_generated_by_token(token: str) -> dict | None:
+    conn = _conn()
+    row = conn.execute(
+        "SELECT id, user_id, name, token, configs, created_at FROM generated_subs WHERE token=?",
+        (token,),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    gid, user_id, name, tok, configs_json, created_at = row
+    return {
+        "id": gid,
+        "user_id": user_id,
+        "name": name,
+        "token": tok,
+        "configs": json.loads(configs_json),
+        "created_at": created_at,
+    }
+
+
+def list_generated_subs(user_id: int) -> list[dict]:
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT id, name, token, configs, created_at FROM generated_subs WHERE user_id=? ORDER BY id DESC",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    result = []
+    for gid, name, token, configs_json, created_at in rows:
+        configs = json.loads(configs_json)
+        result.append(
+            {
+                "id": gid,
+                "name": name,
+                "token": token,
+                "config_count": len(configs),
+                "created_at": created_at,
+            }
+        )
+    return result
+
+
+def delete_generated_sub(gen_id: int, user_id: int) -> bool:
+    conn = _conn()
+    cur = conn.execute("DELETE FROM generated_subs WHERE id=? AND user_id=?", (gen_id, user_id))
+    conn.commit()
+    deleted = cur.rowcount > 0
+    conn.close()
+    return deleted
