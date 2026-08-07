@@ -44,6 +44,7 @@ BASE_URL = os.environ.get("BASE_URL", "").rstrip("/")
 BTN_ADD_SUB = "➕ افزودن اشتراک"
 BTN_LIST = "📋 لیست اشتراک‌ها"
 BTN_MY_GENERATED = "🛠 اشتراک‌های من"
+BTN_MULTI_BUILD = "🌐 ساخت از چند منبع"
 BTN_NOTE_SKIP = "بدون یادداشت"
 BTN_BACK = "« بازگشت به اشتراک‌ها"
 BTN_REFRESH = "🔄 بروزرسانی"
@@ -73,12 +74,14 @@ class RenameState(StatesGroup):
 
 
 class BuildCustomState(StatesGroup):
-    selecting = State()          # انتخاب کانفیگ‌ها
+    selecting = State()          # انتخاب کانفیگ‌ها (تک‌منبع یا چندمنبع)
+    selecting_sources = State()  # انتخاب چند اشتراک منبع
     renaming = State()           # رنیم یکی‌یکی
     waiting_sub_name = State()   # اسم کلی اشتراک سفارشی
+    waiting_expiry = State()     # انتخاب تاریخ انقضا
 
 
-MENU_BUTTONS = {BTN_ADD_SUB, BTN_LIST, BTN_MY_GENERATED}
+MENU_BUTTONS = {BTN_ADD_SUB, BTN_LIST, BTN_MY_GENERATED, BTN_MULTI_BUILD}
 
 
 async def bail_if_menu_button(message: Message, state: FSMContext) -> bool:
@@ -91,6 +94,8 @@ async def bail_if_menu_button(message: Message, state: FSMContext) -> bool:
         await list_subs(message)
     elif message.text == BTN_MY_GENERATED:
         await list_my_generated(message)
+    elif message.text == BTN_MULTI_BUILD:
+        await start_multi_build(message, state)
     return True
 
 
@@ -101,7 +106,7 @@ def is_admin(user_id: int) -> bool:
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_ADD_SUB)],
+            [KeyboardButton(text=BTN_ADD_SUB), KeyboardButton(text=BTN_MULTI_BUILD)],
             [KeyboardButton(text=BTN_LIST)],
             [KeyboardButton(text=BTN_MY_GENERATED)],
         ],
@@ -160,13 +165,117 @@ def build_generated_keyboard(gens: list[dict], page: int = 0) -> InlineKeyboardM
 def gen_detail_text(g: dict) -> str:
     url = make_public_url(g["token"]) if BASE_URL else f"/sub/{g['token']}"
     created = _format_updated_at(g.get("created_at", ""))
+    exp = g.get("expires_at")
+    if exp:
+        if storage.is_generated_expired(g):
+            exp_line = f"⏰ انقضا: <b>منقضی شده</b> ({_format_updated_at(exp)})\n"
+        else:
+            exp_line = f"⏰ انقضا: {_format_updated_at(exp)}\n"
+    else:
+        exp_line = "⏰ انقضا: بدون محدودیت\n"
     text = (
         f"🛠 <b>{escape(g['name'])}</b>\n"
         f"📦 {len(g['configs'])} کانفیگ\n"
-        f"🕒 ساخته‌شده: {created}\n\n"
+        f"🕒 ساخته‌شده: {created}\n"
+        f"{exp_line}\n"
         f"🔗 لینک اشتراک:\n<code>{url}</code>"
     )
     return text
+
+
+def build_expiry_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="♾ بدون انقضا", callback_data="expiry:0")],
+            [
+                InlineKeyboardButton(text="۷ روز", callback_data="expiry:7"),
+                InlineKeyboardButton(text="۳۰ روز", callback_data="expiry:30"),
+            ],
+            [
+                InlineKeyboardButton(text="۹۰ روز", callback_data="expiry:90"),
+                InlineKeyboardButton(text="۱۸۰ روز", callback_data="expiry:180"),
+            ],
+            [InlineKeyboardButton(text="❌ انصراف", callback_data="gens_back")],
+        ]
+    )
+
+
+def build_sources_keyboard(subs: list[dict], selected: set[int], page: int = 0) -> InlineKeyboardMarkup:
+    """انتخاب چند اشتراک به‌عنوان منبع."""
+    start = page * PAGE_SIZE
+    chunk = subs[start : start + PAGE_SIZE]
+    rows = []
+    for sub in chunk:
+        mark = "✅" if sub["id"] in selected else "☐"
+        label = f"{mark} {sub['name']} ({sub['config_count']})"
+        rows.append(
+            [InlineKeyboardButton(text=label, callback_data=f"src_toggle:{sub['id']}:{page}")]
+        )
+    nav = []
+    if start > 0:
+        nav.append(InlineKeyboardButton(text="« قبلی", callback_data=f"src_page:{page - 1}"))
+    if start + PAGE_SIZE < len(subs):
+        nav.append(InlineKeyboardButton(text="بعدی »", callback_data=f"src_page:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append(
+        [
+            InlineKeyboardButton(text="✅ همه", callback_data="src_all"),
+            InlineKeyboardButton(text="☐ هیچکدام", callback_data="src_none"),
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=f"ادامه ({len(selected)} منبع) ←",
+                callback_data="src_done",
+            )
+        ]
+    )
+    rows.append([InlineKeyboardButton(text="❌ انصراف", callback_data="cancel_multi")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_multi_select_keyboard(
+    pool: list[dict], selected: set[int], page: int = 0
+) -> InlineKeyboardMarkup:
+    """pool: [{raw, source_name, key}] — انتخاب کانفیگ از چند منبع."""
+    start = page * PAGE_SIZE
+    chunk = list(range(start, min(start + PAGE_SIZE, len(pool))))
+    rows = []
+    for i in chunk:
+        item = pool[i]
+        remark = get_remark(item["raw"]) or "(بدون نام)"
+        proto = get_protocol(item["raw"])
+        mark = "✅" if i in selected else "☐"
+        src = item["source_name"][:12]
+        label = f"{mark} [{proto}] {remark[:20]} · {src}"
+        rows.append(
+            [InlineKeyboardButton(text=label, callback_data=f"msel_toggle:{i}:{page}")]
+        )
+    nav = []
+    if start > 0:
+        nav.append(InlineKeyboardButton(text="« قبلی", callback_data=f"msel_page:{page - 1}"))
+    if start + PAGE_SIZE < len(pool):
+        nav.append(InlineKeyboardButton(text="بعدی »", callback_data=f"msel_page:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append(
+        [
+            InlineKeyboardButton(text="✅ همه", callback_data="msel_all"),
+            InlineKeyboardButton(text="☐ هیچکدام", callback_data="msel_none"),
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=f"ادامه ({len(selected)} انتخاب‌شده) ←",
+                callback_data="msel_done",
+            )
+        ]
+    )
+    rows.append([InlineKeyboardButton(text="❌ انصراف", callback_data="cancel_multi")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def build_gen_detail_keyboard(gen_id: int) -> InlineKeyboardMarkup:
@@ -294,18 +403,13 @@ def make_public_url(token: str, request_host: str | None = None) -> str:
         scheme = "https"
         return f"{scheme}://{request_host}/sub/{token}"
     # fallback
-    return f"/sub/{token}"
-
-
-# ===================== HTTP Server (برای سرو سابسکریپشن) =====================
+    return f"/sub/{token}"# ===================== HTTP Server (برای سرو سابسکریپشن) =====================
 
 def _wants_html(request: web.Request) -> bool:
     """اگر درخواست از مرورگر باشه True، وگرنه (کلاینت VPN) False."""
-    # ?raw=1 یا مسیر /raw همیشه متن خام
     if request.query.get("raw") in ("1", "true", "yes"):
         return False
     accept = (request.headers.get("Accept") or "").lower()
-    # مرورگرها معمولاً text/html می‌خوان
     if "text/html" in accept:
         return True
     ua = (request.headers.get("User-Agent") or "").lower()
@@ -321,6 +425,14 @@ def _build_panel_html(gen: dict, public_url: str) -> str:
     configs = gen["configs"]
     encoded = encode_subscription(configs)
     created = _format_updated_at(gen.get("created_at", ""))
+    exp = gen.get("expires_at")
+    if exp:
+        if storage.is_generated_expired(gen):
+            exp_label = f"منقضی‌شده ({_format_updated_at(exp)})"
+        else:
+            exp_label = _format_updated_at(exp)
+    else:
+        exp_label = "بدون محدودیت"
 
     rows_html = []
     for i, raw in enumerate(configs):
@@ -368,13 +480,9 @@ def _build_panel_html(gen: dict, public_url: str) -> str:
     padding: 24px 16px 48px;
   }}
   .wrap {{ max-width: 720px; margin: 0 auto; }}
-  header {{
-    text-align: center;
-    margin-bottom: 28px;
-  }}
+  header {{ text-align: center; margin-bottom: 28px; }}
   header .logo {{
-    width: 56px; height: 56px;
-    border-radius: 16px;
+    width: 56px; height: 56px; border-radius: 16px;
     background: linear-gradient(135deg, var(--accent), var(--accent2));
     display: inline-flex; align-items: center; justify-content: center;
     font-size: 28px; margin-bottom: 12px;
@@ -383,25 +491,17 @@ def _build_panel_html(gen: dict, public_url: str) -> str:
   h1 {{ font-size: 1.5rem; font-weight: 700; margin-bottom: 6px; }}
   .meta {{ color: var(--muted); font-size: .9rem; }}
   .panel {{
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 20px;
-    margin-bottom: 20px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 16px; padding: 20px; margin-bottom: 20px;
   }}
   .panel h2 {{
-    font-size: .85rem;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: .04em;
-    margin-bottom: 12px;
+    font-size: .85rem; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .04em; margin-bottom: 12px;
   }}
   .url-box {{
     display: flex; gap: 8px; align-items: stretch;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 4px 4px 4px 12px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 10px; padding: 4px 4px 4px 12px;
   }}
   .url-box code {{
     flex: 1; font-size: .8rem; word-break: break-all;
@@ -418,49 +518,33 @@ def _build_panel_html(gen: dict, public_url: str) -> str:
   }}
   .btn:hover {{ opacity: .9; transform: translateY(-1px); }}
   .btn:active {{ transform: scale(.97); }}
-  .btn-sm {{
-    padding: 6px 12px; font-size: .75rem;
-    background: var(--border); color: var(--text);
-  }}
+  .btn-sm {{ padding: 6px 12px; font-size: .75rem; background: var(--border); color: var(--text); }}
   .btn-sm:hover {{ background: #334155; }}
-  .actions {{
-    display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px;
-  }}
+  .actions {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }}
   .actions .btn {{ flex: 1; min-width: 120px; text-align: center; }}
   .grid {{ display: flex; flex-direction: column; gap: 10px; }}
   .card {{
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 12px 14px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px 14px;
     display: flex; align-items: center; gap: 12px;
   }}
   .card-top {{ flex: 1; min-width: 0; }}
   .badge {{
-    display: inline-block;
-    font-size: .7rem; font-weight: 700;
+    display: inline-block; font-size: .7rem; font-weight: 700;
     padding: 2px 8px; border-radius: 6px;
     background: rgba(56,189,248,.15); color: var(--accent);
     margin-bottom: 4px; text-transform: uppercase;
   }}
-  .remark {{
-    display: block; font-size: .9rem;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }}
+  .remark {{ display: block; font-size: .9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
   .empty {{ color: var(--muted); text-align: center; padding: 24px; }}
   .toast {{
     position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
-    background: var(--ok); color: #064e3b;
-    padding: 10px 20px; border-radius: 999px;
-    font-weight: 700; font-size: .9rem;
-    opacity: 0; transition: .3s; z-index: 99;
+    background: var(--ok); color: #064e3b; padding: 10px 20px; border-radius: 999px;
+    font-weight: 700; font-size: .9rem; opacity: 0; transition: .3s; z-index: 99;
     box-shadow: 0 8px 24px rgba(0,0,0,.3);
   }}
   .toast.show {{ opacity: 1; transform: translateX(-50%) translateY(0); }}
-  footer {{
-    text-align: center; margin-top: 32px;
-    color: var(--muted); font-size: .75rem;
-  }}
+  footer {{ text-align: center; margin-top: 32px; color: var(--muted); font-size: .75rem; }}
 </style>
 </head>
 <body>
@@ -468,9 +552,8 @@ def _build_panel_html(gen: dict, public_url: str) -> str:
   <header>
     <div class="logo">⚡</div>
     <h1>{name}</h1>
-    <p class="meta">{len(configs)} کانفیگ · ساخته‌شده {created}</p>
+    <p class="meta">{len(configs)} کانفیگ · ساخته‌شده {created} · انقضا: {exp_label}</p>
   </header>
-
   <div class="panel">
     <h2>لینک اشتراک</h2>
     <div class="url-box">
@@ -482,44 +565,32 @@ def _build_panel_html(gen: dict, public_url: str) -> str:
       <a class="btn" href="?raw=1" style="text-decoration:none;display:inline-block;text-align:center">دانلود فایل</a>
     </div>
   </div>
-
   <div class="panel">
     <h2>کانفیگ‌ها</h2>
-    <div class="grid">
-      {configs_block}
-    </div>
+    <div class="grid">{configs_block}</div>
   </div>
-
   <footer>برای استفاده در کلاینت، لینک اشتراک را اضافه کنید</footer>
 </div>
-
 <div class="toast" id="toast">کپی شد ✓</div>
-
 <script>
 const SUB_B64 = {repr(encoded)};
-
 function showToast(msg) {{
   const t = document.getElementById('toast');
   t.textContent = msg || 'کپی شد ✓';
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 1800);
 }}
-
 async function copyText(text) {{
   try {{
     await navigator.clipboard.writeText(text);
     showToast('کپی شد ✓');
   }} catch (e) {{
     const ta = document.createElement('textarea');
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
     showToast('کپی شد ✓');
   }}
 }}
-
 function copyConfig(i) {{
   const el = document.getElementById('cfg-' + i);
   if (el) copyText(el.textContent);
@@ -530,19 +601,35 @@ function copyConfig(i) {{
 """
 
 
+def _sub_userinfo(gen: dict) -> str:
+    expire = 0
+    exp = gen.get("expires_at")
+    if exp:
+        try:
+            expire = int(datetime.fromisoformat(exp).timestamp())
+        except Exception:
+            expire = 0
+    return f"upload=0; download=0; total=0; expire={expire}"
+
+
 async def handle_sub(request: web.Request) -> web.Response:
     token = request.match_info.get("token", "")
     gen = storage.get_generated_by_token(token)
     if not gen:
-        return web.Response(
-            text="Subscription not found",
-            status=404,
-            content_type="text/plain",
-        )
+        return web.Response(text="Subscription not found", status=404, content_type="text/plain")
+
+    if storage.is_generated_expired(gen):
+        if _wants_html(request):
+            return web.Response(
+                text="<h2 style='font-family:tahoma;text-align:center;margin-top:40vh'>این اشتراک منقضی شده است.</h2>",
+                content_type="text/html",
+                charset="utf-8",
+                status=410,
+            )
+        return web.Response(text="Subscription expired", status=410, content_type="text/plain")
 
     body = encode_subscription(gen["configs"])
 
-    # کلاینت VPN → محتوای خام
     if not _wants_html(request):
         return web.Response(
             text=body,
@@ -550,11 +637,10 @@ async def handle_sub(request: web.Request) -> web.Response:
             charset="utf-8",
             headers={
                 "profile-title": gen["name"],
-                "subscription-userinfo": "upload=0; download=0; total=0; expire=0",
+                "subscription-userinfo": _sub_userinfo(gen),
             },
         )
 
-    # مرورگر → پنل HTML
     host = request.headers.get("Host", "")
     if BASE_URL:
         public_url = make_public_url(token)
@@ -756,7 +842,10 @@ async def start_build_custom(callback: CallbackQuery, state: FSMContext):
         return await callback.answer("هیچ کانفیگی وجود نداره.", show_alert=True)
 
     await state.set_state(BuildCustomState.selecting)
-    await state.update_data(sub_id=sub_id, selected=set(), rename_queue=[], renamed_configs=[])
+    await state.update_data(
+        sub_id=sub_id, selected=set(), rename_queue=[], renamed_configs=[],
+        multi_pool=None, multi_fake_configs=None,
+    )
 
     await callback.message.edit_text(
         f"🛠 <b>ساخت اشتراک سفارشی از «{escape(sub['name'])}»</b>\n\n"
@@ -843,13 +932,8 @@ async def select_done(callback: CallbackQuery, state: FSMContext):
     if not sub:
         return await callback.answer("اشتراک پیدا نشد.", show_alert=True)
 
-    # صف رنیم: لیست ایندکس‌های انتخاب‌شده (مرتب)
     queue = sorted(selected)
-    await state.update_data(
-        rename_queue=queue,
-        renamed_configs=[],
-        current_rename_idx=0,
-    )
+    await state.update_data(rename_queue=queue, renamed_configs=[], current_rename_idx=0)
     await state.set_state(BuildCustomState.renaming)
 
     first_idx = queue[0]
@@ -873,18 +957,26 @@ async def select_done(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+def _resolve_rename_context(data: dict, user_id: int):
+    """برای تک‌منبع از DB، برای چندمنبع از multi_fake_configs."""
+    sub_id = data.get("sub_id")
+    fake = data.get("multi_fake_configs")
+    if fake is not None and sub_id == -1:
+        return {"id": -1, "configs": fake}
+    return storage.get_sub(sub_id, user_id)
+
+
 @dp.message(BuildCustomState.renaming)
 async def receive_rename(message: Message, state: FSMContext):
     if await bail_if_menu_button(message, state):
         return
 
     data = await state.get_data()
-    sub_id = data["sub_id"]
     queue: list = data["rename_queue"]
     current = data["current_rename_idx"]
     renamed: list = data.get("renamed_configs", [])
 
-    sub = storage.get_sub(sub_id, message.from_user.id)
+    sub = _resolve_rename_context(data, message.from_user.id)
     if not sub:
         await state.clear()
         return await message.answer("اشتراک پیدا نشد.")
@@ -900,18 +992,16 @@ async def receive_rename(message: Message, state: FSMContext):
 @dp.callback_query(F.data == "rename_skip", BuildCustomState.renaming)
 async def rename_skip(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    sub_id = data["sub_id"]
     queue: list = data["rename_queue"]
     current = data["current_rename_idx"]
     renamed: list = data.get("renamed_configs", [])
 
-    sub = storage.get_sub(sub_id, callback.from_user.id)
+    sub = _resolve_rename_context(data, callback.from_user.id)
     if not sub:
         await state.clear()
         return await callback.answer("اشتراک پیدا نشد.", show_alert=True)
 
     idx = queue[current]
-    # بدون تغییر اسم
     renamed.append(sub["configs"][idx])
 
     await callback.message.edit_reply_markup(reply_markup=None)
@@ -930,7 +1020,6 @@ async def _advance_rename(
 ):
     next_idx = current + 1
     if next_idx >= len(queue):
-        # همه رنیم شدن → برو به مرحله اسم کلی اشتراک
         await state.update_data(renamed_configs=renamed)
         await state.set_state(BuildCustomState.waiting_sub_name)
         await message_or_cb_msg.answer(
@@ -947,10 +1036,11 @@ async def _advance_rename(
     remark = get_remark(raw) or "(بدون نام)"
     proto = get_protocol(raw)
 
+    cancel_cb = "cancel_multi" if sub.get("id") == -1 else f"sub_open:{sub['id']}"
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⏭ رد کردن (همان اسم قبلی)", callback_data="rename_skip")],
-            [InlineKeyboardButton(text="❌ انصراف از ساخت", callback_data=f"sub_open:{sub['id']}")],
+            [InlineKeyboardButton(text="❌ انصراف از ساخت", callback_data=cancel_cb)],
         ]
     )
     await message_or_cb_msg.answer(
@@ -963,7 +1053,7 @@ async def _advance_rename(
 
 
 @dp.message(BuildCustomState.waiting_sub_name)
-async def finish_custom_sub(message: Message, state: FSMContext):
+async def receive_custom_name(message: Message, state: FSMContext):
     if await bail_if_menu_button(message, state):
         return
 
@@ -977,33 +1067,265 @@ async def finish_custom_sub(message: Message, state: FSMContext):
         await state.clear()
         return await message.answer("خطا: هیچ کانفیگی آماده نشد.")
 
-    gen_id, token = storage.create_generated_sub(message.from_user.id, name, renamed)
+    await state.update_data(custom_name=name)
+    await state.set_state(BuildCustomState.waiting_expiry)
+    await message.answer(
+        f"اسم: <b>{escape(name)}</b>\n"
+        f"تعداد کانفیگ: {len(renamed)}\n\n"
+        "مدت اعتبار این اشتراک رو انتخاب کن:",
+        reply_markup=build_expiry_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+@dp.callback_query(F.data.startswith("expiry:"), BuildCustomState.waiting_expiry)
+async def finish_custom_with_expiry(callback: CallbackQuery, state: FSMContext):
+    days = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    name = data.get("custom_name", "")
+    renamed = data.get("renamed_configs", [])
+    if not name or not renamed:
+        await state.clear()
+        return await callback.answer("خطا — دوباره شروع کن.", show_alert=True)
+
+    expires_at = None
+    if days > 0:
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+
+    gen_id, token = storage.create_generated_sub(
+        callback.from_user.id, name, renamed, expires_at=expires_at
+    )
     await state.clear()
 
-    # ساخت لینک
+    exp_txt = f"{days} روز" if days else "بدون انقضا"
     if BASE_URL:
         url = make_public_url(token)
-        text = (
+        msg = (
             f"✅ اشتراک سفارشی «{escape(name)}» ساخته شد.\n"
-            f"تعداد کانفیگ: {len(renamed)}\n\n"
+            f"📦 {len(renamed)} کانفیگ · ⏰ {exp_txt}\n\n"
             f"🔗 لینک اشتراک:\n<code>{url}</code>\n\n"
             "این لینک رو می‌تونی مستقیم توی کلاینت‌ها اضافه کنی."
         )
     else:
-        text = (
+        msg = (
             f"✅ اشتراک سفارشی «{escape(name)}» ساخته شد.\n"
-            f"تعداد کانفیگ: {len(renamed)}\n\n"
+            f"📦 {len(renamed)} کانفیگ · ⏰ {exp_txt}\n\n"
             f"لینک:\n<code>https://YOUR-RAILWAY-DOMAIN/sub/{token}</code>\n\n"
-            "⚠️ متغیر محیطی <code>BASE_URL</code> رو در Railway ست کن "
-            "(مثلاً <code>https://xxx.up.railway.app</code>) تا لینک کامل ساخته بشه."
+            "⚠️ متغیر <code>BASE_URL</code> رو در Railway ست کن."
         )
 
-    await message.answer(text, parse_mode="HTML", reply_markup=main_menu())
+    await callback.message.edit_text(msg, parse_mode="HTML")
+    await callback.message.answer("منوی اصلی:", reply_markup=main_menu())
+    await callback.answer("ساخته شد ✅")# ---------- ساخت از چند منبع ----------
+
+@dp.message(F.text == BTN_MULTI_BUILD)
+async def start_multi_build(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return await message.answer("اجازه دسترسی نداری.")
+    subs = storage.list_subs(message.from_user.id)
+    if len(subs) < 1:
+        return await message.answer("اول حداقل یک اشتراک اضافه کن.")
+    await state.set_state(BuildCustomState.selecting_sources)
+    await state.update_data(selected_sources=set(), multi_pool=[], selected=set())
+    await message.answer(
+        "🌐 <b>ساخت اشتراک از چند منبع</b>\n\n"
+        "اشتراک‌هایی که می‌خوای ازشون کانفیگ بگیری رو تیک بزن:",
+        reply_markup=build_sources_keyboard(subs, set()),
+        parse_mode="HTML",
+    )
+
+
+@dp.callback_query(F.data == "cancel_multi")
+async def cancel_multi(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("انصراف داده شد.")
+    await callback.message.answer("منوی اصلی:", reply_markup=main_menu())
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("src_toggle:"), BuildCustomState.selecting_sources)
+async def src_toggle(callback: CallbackQuery, state: FSMContext):
+    _, sid, page = callback.data.split(":")
+    sid, page = int(sid), int(page)
+    data = await state.get_data()
+    selected: set = set(data.get("selected_sources", set()))
+    if sid in selected:
+        selected.discard(sid)
+    else:
+        selected.add(sid)
+    await state.update_data(selected_sources=selected)
+    subs = storage.list_subs(callback.from_user.id)
+    await callback.message.edit_reply_markup(
+        reply_markup=build_sources_keyboard(subs, selected, page)
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("src_page:"), BuildCustomState.selecting_sources)
+async def src_page(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    selected = set(data.get("selected_sources", set()))
+    subs = storage.list_subs(callback.from_user.id)
+    await callback.message.edit_reply_markup(
+        reply_markup=build_sources_keyboard(subs, selected, page)
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "src_all", BuildCustomState.selecting_sources)
+async def src_all(callback: CallbackQuery, state: FSMContext):
+    subs = storage.list_subs(callback.from_user.id)
+    selected = {s["id"] for s in subs}
+    await state.update_data(selected_sources=selected)
+    await callback.message.edit_reply_markup(
+        reply_markup=build_sources_keyboard(subs, selected)
+    )
+    await callback.answer(f"{len(selected)} منبع انتخاب شد")
+
+
+@dp.callback_query(F.data == "src_none", BuildCustomState.selecting_sources)
+async def src_none(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(selected_sources=set())
+    subs = storage.list_subs(callback.from_user.id)
+    await callback.message.edit_reply_markup(
+        reply_markup=build_sources_keyboard(subs, set())
+    )
+    await callback.answer("انتخاب‌ها پاک شد")
+
+
+@dp.callback_query(F.data == "src_done", BuildCustomState.selecting_sources)
+async def src_done(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    selected = set(data.get("selected_sources", set()))
+    if not selected:
+        return await callback.answer("حداقل یک منبع انتخاب کن.", show_alert=True)
+
+    pool = []
+    for sid in sorted(selected):
+        sub = storage.get_sub(sid, callback.from_user.id)
+        if not sub:
+            continue
+        for raw in sub["configs"]:
+            pool.append({"raw": raw, "source_name": sub["name"], "sub_id": sid})
+
+    if not pool:
+        return await callback.answer("این منابع کانفیگی ندارن.", show_alert=True)
+
+    await state.update_data(multi_pool=pool, selected=set(), sub_id=None)
+    await state.set_state(BuildCustomState.selecting)
+    await callback.message.edit_text(
+        f"🌐 <b>{len(selected)} منبع</b> · {len(pool)} کانفیگ\n\n"
+        "کانفیگ‌هایی که می‌خوای رو تیک بزن:",
+        reply_markup=build_multi_select_keyboard(pool, set()),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("msel_toggle:"), BuildCustomState.selecting)
+async def msel_toggle(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    pool = data.get("multi_pool")
+    if not pool:
+        return
+    _, idx, page = callback.data.split(":")
+    idx, page = int(idx), int(page)
+    selected: set = set(data.get("selected", set()))
+    if idx in selected:
+        selected.discard(idx)
+    else:
+        selected.add(idx)
+    await state.update_data(selected=selected)
+    await callback.message.edit_reply_markup(
+        reply_markup=build_multi_select_keyboard(pool, selected, page)
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("msel_page:"), BuildCustomState.selecting)
+async def msel_page(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    pool = data.get("multi_pool")
+    if not pool:
+        return
+    page = int(callback.data.split(":")[1])
+    selected = set(data.get("selected", set()))
+    await callback.message.edit_reply_markup(
+        reply_markup=build_multi_select_keyboard(pool, selected, page)
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "msel_all", BuildCustomState.selecting)
+async def msel_all(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    pool = data.get("multi_pool")
+    if not pool:
+        return
+    selected = set(range(len(pool)))
+    await state.update_data(selected=selected)
+    await callback.message.edit_reply_markup(
+        reply_markup=build_multi_select_keyboard(pool, selected)
+    )
+    await callback.answer(f"{len(selected)} کانفیگ")
+
+
+@dp.callback_query(F.data == "msel_none", BuildCustomState.selecting)
+async def msel_none(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    pool = data.get("multi_pool")
+    if not pool:
+        return
+    await state.update_data(selected=set())
+    await callback.message.edit_reply_markup(
+        reply_markup=build_multi_select_keyboard(pool, set())
+    )
+    await callback.answer("پاک شد")
+
+
+@dp.callback_query(F.data == "msel_done", BuildCustomState.selecting)
+async def msel_done(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    pool = data.get("multi_pool")
+    if not pool:
+        return
+    selected = set(data.get("selected", set()))
+    if not selected:
+        return await callback.answer("حداقل یک کانفیگ انتخاب کن.", show_alert=True)
+
+    queue = sorted(selected)
+    fake_configs = [pool[i]["raw"] for i in queue]
+    await state.update_data(
+        rename_queue=list(range(len(fake_configs))),
+        renamed_configs=[],
+        current_rename_idx=0,
+        multi_fake_configs=fake_configs,
+        sub_id=-1,
+    )
+    await state.set_state(BuildCustomState.renaming)
+
+    raw = fake_configs[0]
+    remark = get_remark(raw) or "(بدون نام)"
+    proto = get_protocol(raw)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⏭ رد کردن (همان اسم قبلی)", callback_data="rename_skip")],
+            [InlineKeyboardButton(text="❌ انصراف از ساخت", callback_data="cancel_multi")],
+        ]
+    )
+    await callback.message.edit_text(
+        f"✏️ رنیم کانفیگ ۱ از {len(fake_configs)}\n\n"
+        f"[{proto}] {escape(remark)}\n\n"
+        "اسم جدید رو بفرست، یا «رد کردن» رو بزن:",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+    await callback.answer()
 
 
 # ---------- لیست اشتراک‌های سفارشی من ----------
 
-@dp.message(F.text == BTN_MY_GENERATED)
 @dp.message(F.text == BTN_MY_GENERATED)
 async def list_my_generated(message: Message):
     if not is_admin(message.from_user.id):
@@ -1020,10 +1342,9 @@ async def list_my_generated(message: Message):
         "یکی از اشتراک‌های سفارشی رو انتخاب کن:",
         reply_markup=build_generated_keyboard(gens),
     )
-    await message.answer(
-        "یکی از اشتراک‌های سفارشی رو انتخاب کن:",
-        reply_markup=build_generated_keyboard(gens),
-    )@dp.callback_query(F.data.startswith("gens_page:"))
+
+
+@dp.callback_query(F.data.startswith("gens_page:"))
 async def paginate_gens(callback: CallbackQuery):
     page = int(callback.data.split(":")[1])
     gens = storage.list_generated_subs(callback.from_user.id)
@@ -1067,7 +1388,6 @@ async def delete_generated(callback: CallbackQuery):
     if not g:
         return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
 
-    # تأیید حذف
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -1367,7 +1687,6 @@ async def do_rename(message: Message, state: FSMContext):
 # ===================== Main =====================
 
 async def main():
-    # وب‌سرور برای سرو سابسکریپشن‌ها
     port = int(os.environ.get("PORT", 8080))
     web_app = create_web_app()
     runner = web.AppRunner(web_app)
