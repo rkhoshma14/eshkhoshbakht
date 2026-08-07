@@ -546,21 +546,23 @@ async def handle_sub(request: web.Request) -> web.Response:
     if not _wants_html(request):
         return web.Response(
             text=body,
-            content_type="text/plain; charset=utf-8",
+            content_type="text/plain",
+            charset="utf-8",
             headers={
                 "profile-title": gen["name"],
-                "subscription-userinfo": f"upload=0; download=0; total=0; expire=0",
+                "subscription-userinfo": "upload=0; download=0; total=0; expire=0",
             },
         )
 
     # مرورگر → پنل HTML
     host = request.headers.get("Host", "")
-    public_url = make_public_url(token, request_host=host if not BASE_URL else None)
     if BASE_URL:
         public_url = make_public_url(token)
+    else:
+        public_url = make_public_url(token, request_host=host)
 
     html = _build_panel_html(gen, public_url)
-    return web.Response(text=html, content_type="text/html; charset=utf-8")
+    return web.Response(text=html, content_type="text/html", charset="utf-8")
 
 
 async def handle_health(request: web.Request) -> web.Response:
