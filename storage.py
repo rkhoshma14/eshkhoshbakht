@@ -209,6 +209,26 @@ def get_generated_by_token(token: str) -> dict | None:
     }
 
 
+def get_generated_by_id(gen_id: int, user_id: int) -> dict | None:
+    conn = _conn()
+    row = conn.execute(
+        "SELECT id, user_id, name, token, configs, created_at FROM generated_subs WHERE id=? AND user_id=?",
+        (gen_id, user_id),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    gid, uid, name, tok, configs_json, created_at = row
+    return {
+        "id": gid,
+        "user_id": uid,
+        "name": name,
+        "token": tok,
+        "configs": json.loads(configs_json),
+        "created_at": created_at,
+    }
+
+
 def list_generated_subs(user_id: int) -> list[dict]:
     conn = _conn()
     rows = conn.execute(
