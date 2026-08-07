@@ -299,21 +299,268 @@ def make_public_url(token: str, request_host: str | None = None) -> str:
 
 # ===================== HTTP Server (برای سرو سابسکریپشن) =====================
 
+def _wants_html(request: web.Request) -> bool:
+    """اگر درخواست از مرورگر باشه True، وگرنه (کلاینت VPN) False."""
+    # ?raw=1 یا مسیر /raw همیشه متن خام
+    if request.query.get("raw") in ("1", "true", "yes"):
+        return False
+    accept = (request.headers.get("Accept") or "").lower()
+    # مرورگرها معمولاً text/html می‌خوان
+    if "text/html" in accept:
+        return True
+    ua = (request.headers.get("User-Agent") or "").lower()
+    browser_hints = ("mozilla", "chrome", "safari", "firefox", "edge", "opera")
+    if any(h in ua for h in browser_hints) and "v2ray" not in ua and "clash" not in ua:
+        return True
+    return False
+
+
+def _build_panel_html(gen: dict, public_url: str) -> str:
+    """پنل HTML خوشگل برای نمایش اشتراک در مرورگر."""
+    name = escape(gen["name"])
+    configs = gen["configs"]
+    encoded = encode_subscription(configs)
+    created = _format_updated_at(gen.get("created_at", ""))
+
+    rows_html = []
+    for i, raw in enumerate(configs):
+        remark = escape(get_remark(raw) or "(بدون نام)")
+        proto = escape(get_protocol(raw))
+        rows_html.append(
+            f"""
+            <div class="card" data-idx="{i}">
+              <div class="card-top">
+                <span class="badge">{proto}</span>
+                <span class="remark">{remark}</span>
+              </div>
+              <button class="btn btn-sm" onclick="copyConfig({i})">کپی کانفیگ</button>
+              <script type="application/json" id="cfg-{i}">{escape(raw)}</script>
+            </div>
+            """
+        )
+
+    configs_block = "\n".join(rows_html) if rows_html else '<p class="empty">کانفیگی نیست.</p>'
+
+    return f"""<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>{name}</title>
+<style>
+  :root {{
+    --bg: #0b0f19;
+    --card: #141b2d;
+    --border: #1e293b;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --accent2: #818cf8;
+    --ok: #34d399;
+    --danger: #f87171;
+  }}
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    font-family: "Vazirmatn", "Tahoma", system-ui, sans-serif;
+    background: radial-gradient(ellipse at top, #1a1f35 0%, var(--bg) 60%);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px 16px 48px;
+  }}
+  .wrap {{ max-width: 720px; margin: 0 auto; }}
+  header {{
+    text-align: center;
+    margin-bottom: 28px;
+  }}
+  header .logo {{
+    width: 56px; height: 56px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 28px; margin-bottom: 12px;
+    box-shadow: 0 8px 24px rgba(56,189,248,.25);
+  }}
+  h1 {{ font-size: 1.5rem; font-weight: 700; margin-bottom: 6px; }}
+  .meta {{ color: var(--muted); font-size: .9rem; }}
+  .panel {{
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }}
+  .panel h2 {{
+    font-size: .85rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    margin-bottom: 12px;
+  }}
+  .url-box {{
+    display: flex; gap: 8px; align-items: stretch;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 4px 4px 4px 12px;
+  }}
+  .url-box code {{
+    flex: 1; font-size: .8rem; word-break: break-all;
+    color: var(--accent); line-height: 1.5; padding: 8px 0;
+    direction: ltr; text-align: left;
+  }}
+  .btn {{
+    border: none; cursor: pointer;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: #0b0f19; font-weight: 700;
+    padding: 10px 16px; border-radius: 8px;
+    font-size: .85rem; white-space: nowrap;
+    transition: transform .15s, opacity .15s;
+  }}
+  .btn:hover {{ opacity: .9; transform: translateY(-1px); }}
+  .btn:active {{ transform: scale(.97); }}
+  .btn-sm {{
+    padding: 6px 12px; font-size: .75rem;
+    background: var(--border); color: var(--text);
+  }}
+  .btn-sm:hover {{ background: #334155; }}
+  .actions {{
+    display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px;
+  }}
+  .actions .btn {{ flex: 1; min-width: 120px; text-align: center; }}
+  .grid {{ display: flex; flex-direction: column; gap: 10px; }}
+  .card {{
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: flex; align-items: center; gap: 12px;
+  }}
+  .card-top {{ flex: 1; min-width: 0; }}
+  .badge {{
+    display: inline-block;
+    font-size: .7rem; font-weight: 700;
+    padding: 2px 8px; border-radius: 6px;
+    background: rgba(56,189,248,.15); color: var(--accent);
+    margin-bottom: 4px; text-transform: uppercase;
+  }}
+  .remark {{
+    display: block; font-size: .9rem;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }}
+  .empty {{ color: var(--muted); text-align: center; padding: 24px; }}
+  .toast {{
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
+    background: var(--ok); color: #064e3b;
+    padding: 10px 20px; border-radius: 999px;
+    font-weight: 700; font-size: .9rem;
+    opacity: 0; transition: .3s; z-index: 99;
+    box-shadow: 0 8px 24px rgba(0,0,0,.3);
+  }}
+  .toast.show {{ opacity: 1; transform: translateX(-50%) translateY(0); }}
+  footer {{
+    text-align: center; margin-top: 32px;
+    color: var(--muted); font-size: .75rem;
+  }}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">⚡</div>
+    <h1>{name}</h1>
+    <p class="meta">{len(configs)} کانفیگ · ساخته‌شده {created}</p>
+  </header>
+
+  <div class="panel">
+    <h2>لینک اشتراک</h2>
+    <div class="url-box">
+      <code id="sub-url">{escape(public_url)}</code>
+      <button class="btn" onclick="copyText(document.getElementById('sub-url').textContent)">کپی لینک</button>
+    </div>
+    <div class="actions">
+      <button class="btn" onclick="copyText(SUB_B64)">کپی محتوای اشتراک</button>
+      <a class="btn" href="?raw=1" style="text-decoration:none;display:inline-block;text-align:center">دانلود فایل</a>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>کانفیگ‌ها</h2>
+    <div class="grid">
+      {configs_block}
+    </div>
+  </div>
+
+  <footer>برای استفاده در کلاینت، لینک اشتراک را اضافه کنید</footer>
+</div>
+
+<div class="toast" id="toast">کپی شد ✓</div>
+
+<script>
+const SUB_B64 = {repr(encoded)};
+
+function showToast(msg) {{
+  const t = document.getElementById('toast');
+  t.textContent = msg || 'کپی شد ✓';
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1800);
+}}
+
+async function copyText(text) {{
+  try {{
+    await navigator.clipboard.writeText(text);
+    showToast('کپی شد ✓');
+  }} catch (e) {{
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast('کپی شد ✓');
+  }}
+}}
+
+function copyConfig(i) {{
+  const el = document.getElementById('cfg-' + i);
+  if (el) copyText(el.textContent);
+}}
+</script>
+</body>
+</html>
+"""
+
+
 async def handle_sub(request: web.Request) -> web.Response:
     token = request.match_info.get("token", "")
     gen = storage.get_generated_by_token(token)
     if not gen:
-        return web.Response(text="Subscription not found", status=404)
+        return web.Response(
+            text="Subscription not found",
+            status=404,
+            content_type="text/plain",
+        )
 
     body = encode_subscription(gen["configs"])
-    return web.Response(
-        text=body,
-        content_type="text/plain",
-        headers={
-            "profile-title": gen["name"],
-            "content-disposition": f'attachment; filename="{gen["name"]}.txt"',
-        },
-    )
+
+    # کلاینت VPN → محتوای خام
+    if not _wants_html(request):
+        return web.Response(
+            text=body,
+            content_type="text/plain; charset=utf-8",
+            headers={
+                "profile-title": gen["name"],
+                "subscription-userinfo": f"upload=0; download=0; total=0; expire=0",
+            },
+        )
+
+    # مرورگر → پنل HTML
+    host = request.headers.get("Host", "")
+    public_url = make_public_url(token, request_host=host if not BASE_URL else None)
+    if BASE_URL:
+        public_url = make_public_url(token)
+
+    html = _build_panel_html(gen, public_url)
+    return web.Response(text=html, content_type="text/html; charset=utf-8")
 
 
 async def handle_health(request: web.Request) -> web.Response:
@@ -325,10 +572,7 @@ def create_web_app() -> web.Application:
     app.router.add_get("/sub/{token}", handle_sub)
     app.router.add_get("/health", handle_health)
     app.router.add_get("/", handle_health)
-    return app
-
-
-# ===================== Telegram Handlers =====================
+    return app# ===================== Telegram Handlers =====================
 
 @dp.message(CommandStart())
 async def start(message: Message):
@@ -569,7 +813,10 @@ async def select_all(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup(
         reply_markup=build_select_keyboard(sub_id, sub["configs"], selected)
     )
-    await callback.answer(f"{len(selected)} کانفیگ انتخاب شد")@dp.callback_query(F.data.startswith("sel_none:"), BuildCustomState.selecting)
+    await callback.answer(f"{len(selected)} کانفیگ انتخاب شد")
+
+
+@dp.callback_query(F.data.startswith("sel_none:"), BuildCustomState.selecting)
 async def select_none(callback: CallbackQuery, state: FSMContext):
     sub_id = int(callback.data.split(":")[1])
     sub = storage.get_sub(sub_id, callback.from_user.id)
@@ -769,10 +1016,7 @@ async def list_my_generated(message: Message):
     await message.answer(
         "یکی از اشتراک‌های سفارشی رو انتخاب کن:",
         reply_markup=build_generated_keyboard(gens),
-    )
-
-
-@dp.callback_query(F.data.startswith("gens_page:"))
+    )@dp.callback_query(F.data.startswith("gens_page:"))
 async def paginate_gens(callback: CallbackQuery):
     page = int(callback.data.split(":")[1])
     gens = storage.list_generated_subs(callback.from_user.id)
