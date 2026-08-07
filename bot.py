@@ -138,6 +138,46 @@ def build_subs_keyboard(subs: list[dict], page: int = 0) -> InlineKeyboardMarkup
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def build_generated_keyboard(gens: list[dict], page: int = 0) -> InlineKeyboardMarkup:
+    """لیست دکمه‌ای اشتراک‌های سفارشی (مثل لیست اشتراک‌ها)."""
+    start = page * PAGE_SIZE
+    chunk = gens[start : start + PAGE_SIZE]
+    rows = []
+    for i, g in enumerate(chunk, start=start):
+        label = f"{i + 1}. {g['name']} ({g['config_count']} کانفیگ)"
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"gen_open:{g['id']}")])
+
+    nav = []
+    if start > 0:
+        nav.append(InlineKeyboardButton(text="« قبلی", callback_data=f"gens_page:{page - 1}"))
+    if start + PAGE_SIZE < len(gens):
+        nav.append(InlineKeyboardButton(text="بعدی »", callback_data=f"gens_page:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def gen_detail_text(g: dict) -> str:
+    url = make_public_url(g["token"]) if BASE_URL else f"/sub/{g['token']}"
+    created = _format_updated_at(g.get("created_at", ""))
+    text = (
+        f"🛠 <b>{escape(g['name'])}</b>\n"
+        f"📦 {len(g['configs'])} کانفیگ\n"
+        f"🕒 ساخته‌شده: {created}\n\n"
+        f"🔗 لینک اشتراک:\n<code>{url}</code>"
+    )
+    return text
+
+
+def build_gen_detail_keyboard(gen_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🗑 حذف این اشتراک", callback_data=f"gen_delete:{gen_id}")],
+            [InlineKeyboardButton(text="« بازگشت به لیست", callback_data="gens_back")],
+        ]
+    )
+
+
 def build_configs_keyboard(sub_id: int, configs: list[str], page: int = 0) -> InlineKeyboardMarkup:
     start = page * PAGE_SIZE
     chunk = configs[start : start + PAGE_SIZE]
@@ -529,10 +569,7 @@ async def select_all(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_reply_markup(
         reply_markup=build_select_keyboard(sub_id, sub["configs"], selected)
     )
-    await callback.answer(f"{len(selected)} کانفیگ انتخاب شد")
-
-
-@dp.callback_query(F.data.startswith("sel_none:"), BuildCustomState.selecting)
+    await callback.answer(f"{len(selected)} کانفیگ انتخاب شد")@dp.callback_query(F.data.startswith("sel_none:"), BuildCustomState.selecting)
 async def select_none(callback: CallbackQuery, state: FSMContext):
     sub_id = int(callback.data.split(":")[1])
     sub = storage.get_sub(sub_id, callback.from_user.id)
@@ -729,59 +766,93 @@ async def list_my_generated(message: Message):
             "از داخل یکی از اشتراک‌ها دکمه «🛠 ساخت اشتراک سفارشی» رو بزن."
         )
 
-    lines = ["🛠 <b>اشتراک‌های سفارشی تو:</b>\n"]
-    rows = []
-    for g in gens:
-        url = make_public_url(g["token"]) if BASE_URL else f"/sub/{g['token']}"
-        lines.append(
-            f"• <b>{escape(g['name'])}</b> ({g['config_count']} کانفیگ)\n"
-            f"  <code>{url}</code>"
-        )
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"🗑 حذف «{g['name'][:20]}»",
-                    callback_data=f"gen_delete:{g['id']}",
-                )
-            ]
-        )
-
-    kb = InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
-    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb)
+    await message.answer(
+        "یکی از اشتراک‌های سفارشی رو انتخاب کن:",
+        reply_markup=build_generated_keyboard(gens),
+    )
 
 
-@dp.callback_query(F.data.startswith("gen_delete:"))
+@dp.callback_query(F.data.startswith("gens_page:"))
+async def paginate_gens(callback: CallbackQuery):
+    page = int(callback.data.split(":")[1])
+    gens = storage.list_generated_subs(callback.from_user.id)
+    await callback.message.edit_reply_markup(reply_markup=build_generated_keyboard(gens, page))
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "gens_back")
+async def back_to_gens(callback: CallbackQuery):
+    gens = storage.list_generated_subs(callback.from_user.id)
+    if not gens:
+        await callback.message.edit_text("هیچ اشتراک سفارشی‌ای نداری.")
+        await callback.answer()
+        return
+    await callback.message.edit_text(
+        "یکی از اشتراک‌های سفارشی رو انتخاب کن:",
+        reply_markup=build_generated_keyboard(gens),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("gen_open:"))
+async def open_generated(callback: CallbackQuery):
+    gen_id = int(callback.data.split(":")[1])
+    g = storage.get_generated_by_id(gen_id, callback.from_user.id)
+    if not g:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+
+    await callback.message.edit_text(
+        gen_detail_text(g),
+        reply_markup=build_gen_detail_keyboard(gen_id),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.regexp(r"^gen_delete:\d+$"))
 async def delete_generated(callback: CallbackQuery):
     gen_id = int(callback.data.split(":")[1])
-    ok = storage.delete_generated_sub(gen_id, callback.from_user.id)
-    if ok:
-        await callback.answer("حذف شد ✅")
-        # رفرش لیست
-        gens = storage.list_generated_subs(callback.from_user.id)
-        if not gens:
-            await callback.message.edit_text("همه اشتراک‌های سفارشی حذف شدن.")
-            return
-        lines = ["🛠 <b>اشتراک‌های سفارشی تو:</b>\n"]
-        rows = []
-        for g in gens:
-            url = make_public_url(g["token"]) if BASE_URL else f"/sub/{g['token']}"
-            lines.append(
-                f"• <b>{escape(g['name'])}</b> ({g['config_count']} کانفیگ)\n"
-                f"  <code>{url}</code>"
-            )
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        text=f"🗑 حذف «{g['name'][:20]}»",
-                        callback_data=f"gen_delete:{g['id']}",
-                    )
-                ]
-            )
+    g = storage.get_generated_by_id(gen_id, callback.from_user.id)
+    if not g:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+
+    # تأیید حذف
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ بله، حذف کن", callback_data=f"gen_delete_yes:{gen_id}"),
+                InlineKeyboardButton(text="❌ انصراف", callback_data=f"gen_open:{gen_id}"),
+            ]
+        ]
+    )
+    await callback.message.edit_text(
+        f"مطمئنی می‌خوای اشتراک سفارشی «{escape(g['name'])}» حذف بشه؟\n"
+        "لینکش دیگه کار نمی‌کنه.",
+        reply_markup=kb,
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.regexp(r"^gen_delete_yes:\d+$"))
+async def delete_generated_confirm(callback: CallbackQuery):
+    gen_id = int(callback.data.split(":")[1])
+    g = storage.get_generated_by_id(gen_id, callback.from_user.id)
+    if not g:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+
+    storage.delete_generated_sub(gen_id, callback.from_user.id)
+    gens = storage.list_generated_subs(callback.from_user.id)
+
+    if gens:
         await callback.message.edit_text(
-            "\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+            f"اشتراک «{escape(g['name'])}» حذف شد.\n\nیکی از اشتراک‌های سفارشی رو انتخاب کن:",
+            reply_markup=build_generated_keyboard(gens),
         )
     else:
-        await callback.answer("پیدا نشد.", show_alert=True)
+        await callback.message.edit_text(
+            f"اشتراک «{escape(g['name'])}» حذف شد.\n\nهیچ اشتراک سفارشی‌ای نداری."
+        )
+    await callback.answer("حذف شد ✅")
 
 
 # ---------- ویرایش یادداشت ----------
