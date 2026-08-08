@@ -1,14 +1,7 @@
 """
-احراز هویت پنل وب با Telegram Login Widget + مدیریت سشن.
-
-نحوه‌ی کار:
-۱. کاربر تو صفحه‌ی لاگین رو دکمه‌ی "ورود با تلگرام" می‌زنه.
-۲. تلگرام کاربر رو با id/hash/... به /panel/auth/callback ریدایرکت می‌کنه.
-۳. hash رو با HMAC-SHA256 و کلید مشتق‌شده از BOT_TOKEN وریفای می‌کنیم.
-۴. اگه id توی ADMIN_IDS بود، یه سشن می‌سازیم و کوکی می‌ذاریم.
-
-نکته‌ی مهم: برای اینکه ویجت کار کنه، باید دامنه‌ی سایت رو با دستور
-/setdomain به BotFather بدی (توضیح کامل تو README).
+احراز هویت پنل وب:
+- Telegram Login Widget
+- ورود با یوزرنیم / پسورد (متغیرهای محیطی PANEL_USER و PANEL_PASSWORD)
 """
 import hashlib
 import hmac
@@ -21,25 +14,36 @@ from aiohttp import web
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 ADMIN_IDS = {int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()}
 
+PANEL_USER = os.environ.get("PANEL_USER", "").strip()
+PANEL_PASSWORD = os.environ.get("PANEL_PASSWORD", "").strip()
+_panel_uid_raw = os.environ.get("PANEL_USER_ID", "").strip()
+PANEL_USER_ID: int | None = int(_panel_uid_raw) if _panel_uid_raw.isdigit() else None
+
 COOKIE_NAME = "kh_session"
-SESSION_TTL = 30 * 24 * 3600  # ۳۰ روز
-AUTH_MAX_AGE = 86400  # حداکثر قدمت داده‌ی ورود تلگرام (ثانیه)
+SESSION_TTL = 30 * 24 * 3600
+AUTH_MAX_AGE = 86400
 
-# بعد از bot.get_me() توی main() پر میشه، برای نمایش تو صفحه‌ی لاگین
 BOT_USERNAME: str = ""
-
-# سشن‌ها فقط تو حافظه نگه داشته میشن؛ با ری‌استارت شدن سرویس، باید دوباره لاگین کنی.
 _sessions: dict[str, dict] = {}
 
 
+def password_login_enabled() -> bool:
+    return bool(PANEL_USER and PANEL_PASSWORD)
+
+
 def panel_enabled() -> bool:
-    """پنل وب فقط وقتی فعاله که حداقل یک ADMIN_IDS ست شده باشه؛ وگرنه قفل می‌مونه."""
-    return bool(ADMIN_IDS)
+    return bool(ADMIN_IDS) or password_login_enabled()
+
+
+def _password_session_user_id() -> int | None:
+    if PANEL_USER_ID is not None:
+        return PANEL_USER_ID
+    if ADMIN_IDS:
+        return sorted(ADMIN_IDS)[0]
+    return 1
 
 
 def verify_telegram_login(data: dict) -> int | None:
-    """داده‌ی برگشتی از Telegram Login Widget رو وریفای می‌کنه.
-    در صورت معتبر و مجاز بودن، user_id رو برمی‌گردونه، وگرنه None."""
     received_hash = data.get("hash")
     if not received_hash:
         return None
@@ -69,6 +73,18 @@ def verify_telegram_login(data: dict) -> int | None:
     return user_id
 
 
+def verify_password_login(username: str, password: str) -> int | None:
+    if not password_login_enabled():
+        return None
+    if not username or not password:
+        return None
+    user_ok = secrets.compare_digest(username.strip(), PANEL_USER)
+    pass_ok = secrets.compare_digest(password, PANEL_PASSWORD)
+    if not (user_ok and pass_ok):
+        return None
+    return _password_session_user_id()
+
+
 def create_session(user_id: int) -> str:
     session_id = secrets.token_urlsafe(32)
     _sessions[session_id] = {"user_id": user_id, "expires": time.time() + SESSION_TTL}
@@ -92,7 +108,12 @@ def destroy_session(session_id: str | None) -> None:
         _sessions.pop(session_id, None)
 
 
-_PUBLIC_PANEL_PATHS = {"/panel/login", "/panel/auth/callback", "/panel/logout"}
+_PUBLIC_PANEL_PATHS = {
+    "/panel/login",
+    "/panel/auth/callback",
+    "/panel/auth/password",
+    "/panel/logout",
+}
 
 
 @web.middleware
