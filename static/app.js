@@ -1,17 +1,44 @@
 // ============ پنل خوشبخت — منطق اصلی اپ ============
 
 const state = {
-  tab: "subs",           // "subs" | "generated"
-  view: "list",          // "list" | "sub-detail" | "gen-detail"
+  tab: "subs",
+  view: "list",
   subs: [],
   currentSub: null,
-  pingResults: null,     // {index: ms}
+  pingResults: null,
   generated: [],
   currentGen: null,
-  cart: [],               // [{sub_id, sub_name, index, remark, protocol, name}]
+  cart: [],
 };
 
 const app = document.getElementById("app");
+
+/* ---------- SVG icons (line) ---------- */
+const ICONS = {
+  logo: '<svg viewBox="0 0 24 24"><path d="M12 3l2.2 4.5L19 8.3l-3.5 3.4.8 4.8L12 14.5 7.7 16.5l.8-4.8L5 8.3l4.8-.8L12 3z"/><circle cx="12" cy="12" r="2"/></svg>',
+  subs: '<svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>',
+  custom: '<svg viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg>',
+  plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  logout: '<svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>',
+  chevron: '<svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>',
+  back: '<svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
+  ping: '<svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>',
+  broom: '<svg viewBox="0 0 24 24"><path d="M3 21l2-2m0 0l7.5-7.5m-7.5 7.5l7.5-7.5m0 0L19 4m-6.5 6.5L19 4m0 0l-2-2"/><path d="M14 7l3 3"/></svg>',
+  export: '<svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
+  note: '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>',
+  trash: '<svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"/><path d="M10 11v6M14 11v6"/></svg>',
+  edit: '<svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>',
+  copy: '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  link: '<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>',
+  empty: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 15h3"/></svg>',
+  check: '<svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>',
+};
+
+function icon(name, cls) {
+  const svg = ICONS[name] || ICONS.empty;
+  return `<span class="icon ${cls || ""}" aria-hidden="true">${svg}</span>`;
+}
 
 // ---------- کمکی‌ها ----------
 
@@ -44,7 +71,7 @@ function toast(msg, isError) {
 async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
-    toast("کپی شد ✓");
+    toast("کپی شد");
   } catch (e) {
     const ta = document.createElement("textarea");
     ta.value = text;
@@ -52,7 +79,7 @@ async function copyText(text) {
     ta.select();
     document.execCommand("copy");
     document.body.removeChild(ta);
-    toast("کپی شد ✓");
+    toast("کپی شد");
   }
 }
 
@@ -63,7 +90,7 @@ function esc(s) {
 }
 
 function fmtDate(iso) {
-  if (!iso) return "-";
+  if (!iso) return "—";
   try {
     const d = new Date(iso);
     return d.toLocaleString("fa-IR", { dateStyle: "short", timeStyle: "short" });
@@ -91,13 +118,51 @@ async function boot() {
   try {
     state.subs = await api("GET", "/api/subs");
   } catch (e) {
-    app.innerHTML = `<div class="empty-state">خطا: ${esc(e.message)}</div>`;
+    app.innerHTML = `<div class="empty-state">${icon("empty", "icon-lg")}<div>خطا: ${esc(e.message)}</div></div>`;
     return;
   }
   render();
 }
 
-// ---------- رندر اصلی ----------
+// ---------- شل + رندر اصلی ----------
+
+function renderShell(body) {
+  const showNav = state.view === "list";
+  return `
+    <div class="mobile-bar">
+      <strong>${icon("logo")} خوشبخت</strong>
+      <a href="/panel/logout" class="btn-sm btn" style="text-decoration:none">${icon("logout", "icon-sm")} خروج</a>
+    </div>
+    <div class="app-layout">
+      <aside class="sidebar">
+        <div class="sidebar-brand">
+          <div class="sidebar-brand-icon">${ICONS.logo}</div>
+          <div class="sidebar-brand-text">
+            <strong>خوشبخت</strong>
+            <span>پنل مدیریت تونل</span>
+          </div>
+        </div>
+        <nav class="nav-section">
+          <button class="nav-item ${state.tab === "subs" && showNav ? "active" : ""}" data-tab="subs">
+            ${icon("subs")} اشتراک‌ها
+          </button>
+          <button class="nav-item ${state.tab === "generated" && showNav ? "active" : ""}" data-tab="generated">
+            ${icon("custom")} اشتراک‌های سفارشی
+          </button>
+        </nav>
+        <div class="sidebar-footer">
+          <a class="nav-item" href="/panel/logout">${icon("logout")} خروج</a>
+        </div>
+      </aside>
+      <main class="main">${body}</main>
+    </div>
+    <nav class="mobile-nav">
+      <button class="${state.tab === "subs" ? "active" : ""}" data-tab="subs">${icon("subs")}<span>اشتراک‌ها</span></button>
+      <button class="${state.tab === "generated" ? "active" : ""}" data-tab="generated">${icon("custom")}<span>سفارشی</span></button>
+    </nav>
+    ${renderCartBar()}
+  `;
+}
 
 function render() {
   let body = "";
@@ -111,27 +176,13 @@ function render() {
     body = renderGeneratedList();
   }
 
-  app.innerHTML = `
-    <div class="topbar">
-      <h1>⚡ پنل خوشبخت</h1>
-      <a href="/panel/logout" class="btn-sm btn" style="text-decoration:none">خروج</a>
-    </div>
-    ${state.view === "list" ? `
-      <div class="tabs">
-        <button class="tab-btn ${state.tab === "subs" ? "active" : ""}" data-tab="subs">📋 اشتراک‌ها</button>
-        <button class="tab-btn ${state.tab === "generated" ? "active" : ""}" data-tab="generated">🛠 اشتراک‌های سفارشی من</button>
-      </div>
-    ` : ""}
-    ${body}
-    ${renderCartBar()}
-  `;
-
+  app.innerHTML = renderShell(body);
   bindTopLevelEvents();
   bindCartBarEvents();
 }
 
 function bindTopLevelEvents() {
-  app.querySelectorAll(".tab-btn").forEach((btn) => {
+  document.querySelectorAll("[data-tab]").forEach((btn) => {
     btn.addEventListener("click", () => {
       state.tab = btn.dataset.tab;
       state.view = "list";
@@ -148,9 +199,9 @@ function renderSubsList() {
     <div class="list-item" data-open-sub="${s.id}">
       <div>
         <div class="title">${esc(s.name)}</div>
-        <div class="subtitle">${s.config_count} کانفیگ · بروزرسانی ${fmtDate(s.updated_at)}${s.note ? " · 📝 یادداشت داره" : ""}</div>
+        <div class="subtitle">${s.config_count} کانفیگ · ${fmtDate(s.updated_at)}${s.note ? " · یادداشت" : ""}</div>
       </div>
-      <span>›</span>
+      <span class="chevron">${icon("chevron")}</span>
     </div>
   `).join("");
 
@@ -163,18 +214,22 @@ function renderSubsList() {
   });
 
   return `
-    <div class="card">
-      <button class="btn" id="add-sub-btn">➕ افزودن اشتراک</button>
+    <div class="page-header">
+      <div>
+        <h2>${icon("subs")} اشتراک‌ها</h2>
+        <p class="page-desc">منبع‌های اشتراک VPN خود را مدیریت کنید</p>
+      </div>
+      <button class="btn" id="add-sub-btn">${icon("plus")} افزودن اشتراک</button>
     </div>
-    ${state.subs.length ? items : '<div class="empty-state">هنوز اشتراکی اضافه نکردی.</div>'}
+    ${state.subs.length ? items : `<div class="empty-state">${icon("empty", "icon-lg")}<div>هنوز اشتراکی اضافه نکردی.</div></div>`}
   `;
 }
 
 function openAddSubModal() {
   openModal(`
-    <h2>➕ افزودن اشتراک</h2>
+    <h2>${icon("plus")} افزودن اشتراک</h2>
     <label>لینک اشتراک</label>
-    <input type="url" id="f-url" placeholder="https://..."/>
+    <input type="url" id="f-url" placeholder="https://..." dir="ltr"/>
     <label>اسم</label>
     <input type="text" id="f-name" placeholder="مثلا: آمریکا - محمد"/>
     <label>یادداشت (اختیاری)</label>
@@ -195,12 +250,12 @@ function openAddSubModal() {
     try {
       await api("POST", "/api/subs", { sub_url, name, note });
       closeModal();
-      toast("اشتراک اضافه شد ✓");
+      toast("اشتراک اضافه شد");
       state.subs = await api("GET", "/api/subs");
       render();
     } catch (e) {
       toast(e.message, true);
-      btn.disabled = false; btn.textContent = "افزودن";
+      btn.disabled = false; btn.innerHTML = "افزودن";
     }
   });
 }
@@ -223,8 +278,8 @@ function renderSubDetail(sub) {
     let msBadge = "";
     if (ms !== undefined) {
       msBadge = ms === null
-        ? '<span class="badge badge-dead">تایم‌اوت</span>'
-        : `<span class="badge badge-ms">${Math.round(ms)}ms</span>`;
+        ? '<span class="badge badge-dead">timeout</span>'
+        : `<span class="badge badge-ms">${Math.round(ms)} ms</span>`;
     }
     return `
       <div class="config-row">
@@ -233,7 +288,7 @@ function renderSubDetail(sub) {
         <span class="remark">${esc(c.remark || "(بدون نام)")}</span>
         ${msBadge}
         <div class="config-actions">
-          <button class="btn-sm btn" data-rename="${c.index}">✏️</button>
+          <button class="btn-sm btn" data-rename="${c.index}" title="رنیم">${icon("edit", "icon-sm")}</button>
         </div>
       </div>
     `;
@@ -242,26 +297,26 @@ function renderSubDetail(sub) {
   setTimeout(() => bindSubDetailEvents(sub), 0);
 
   return `
-    <div class="back-link" id="back-to-subs">« بازگشت به اشتراک‌ها</div>
+    <button class="back-link" id="back-to-subs">${icon("back", "icon-sm")} بازگشت به اشتراک‌ها</button>
     <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+      <div class="card-header">
         <div>
-          <div class="title" style="font-size:1.1rem;font-weight:700">${esc(sub.name)}</div>
-          <div class="subtitle">${sub.config_count} کانفیگ · بروزرسانی ${fmtDate(sub.updated_at)}</div>
+          <div class="detail-title">${esc(sub.name)}</div>
+          <div class="detail-meta">${sub.config_count} کانفیگ · ${fmtDate(sub.updated_at)}</div>
         </div>
-        <button class="btn-sm btn btn-danger" id="delete-sub-btn">🗑 حذف اشتراک</button>
+        <button class="btn-sm btn btn-danger" id="delete-sub-btn">${icon("trash", "icon-sm")} حذف</button>
       </div>
-      ${sub.note ? `<div style="margin-top:10px;white-space:pre-wrap;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:.85rem;color:var(--muted)">📝 ${esc(sub.note)}</div>` : ""}
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
-        <button class="btn-sm btn" id="refresh-sub-btn">🔄 بروزرسانی</button>
-        <button class="btn-sm btn" id="ping-sub-btn">📶 پینگ همه</button>
-        <button class="btn-sm btn" id="dead-sub-btn">🧹 حذف مرده‌ها</button>
-        <button class="btn-sm btn" id="export-sub-btn">📤 خروجی</button>
-        <button class="btn-sm btn" id="note-sub-btn">📝 یادداشت</button>
+      ${sub.note ? `<div class="note-box">${esc(sub.note)}</div>` : ""}
+      <div class="action-bar">
+        <button class="btn-sm btn" id="refresh-sub-btn">${icon("refresh", "icon-sm")} بروزرسانی</button>
+        <button class="btn-sm btn" id="ping-sub-btn">${icon("ping", "icon-sm")} پینگ</button>
+        <button class="btn-sm btn" id="dead-sub-btn">${icon("broom", "icon-sm")} حذف مرده‌ها</button>
+        <button class="btn-sm btn" id="export-sub-btn">${icon("export", "icon-sm")} خروجی</button>
+        <button class="btn-sm btn" id="note-sub-btn">${icon("note", "icon-sm")} یادداشت</button>
       </div>
     </div>
     <div class="card">
-      ${rows || '<div class="empty-state">این اشتراک کانفیگی نداره.</div>'}
+      ${rows || `<div class="empty-state">این اشتراک کانفیگی نداره.</div>`}
     </div>
   `;
 }
@@ -303,13 +358,13 @@ async function refreshSub(id) {
     state.currentSub = await api("POST", `/api/subs/${id}/refresh`);
     state.pingResults = null;
     render();
-    toast("بروزرسانی شد ✓");
+    toast("بروزرسانی شد");
   } catch (e) { toast(e.message, true); }
 }
 
 function confirmDeleteSub(sub) {
   openModal(`
-    <h2>حذف اشتراک</h2>
+    <h2>${icon("trash")} حذف اشتراک</h2>
     <p class="muted">مطمئنی می‌خوای «${esc(sub.name)}» با ${sub.config_count} کانفیگ حذف بشه؟ این کار قابل بازگشت نیست.</p>
     <div class="modal-actions">
       <button class="btn-outline btn" id="cancel-btn">انصراف</button>
@@ -321,7 +376,7 @@ function confirmDeleteSub(sub) {
     try {
       await api("DELETE", `/api/subs/${sub.id}`);
       closeModal();
-      toast("حذف شد ✓");
+      toast("حذف شد");
       state.cart = state.cart.filter((it) => it.sub_id !== sub.id);
       state.subs = await api("GET", "/api/subs");
       state.view = "list";
@@ -338,7 +393,7 @@ async function pingSub(id) {
     state.pingResults = {};
     results.forEach((r) => { state.pingResults[r.index] = r.ms; });
     render();
-    toast("پینگ تموم شد ✓");
+    toast("پینگ تمام شد");
   } catch (e) { toast(e.message, true); }
 }
 
@@ -350,7 +405,7 @@ async function previewDeadConfigs(sub) {
   } catch (e) { toast(e.message, true); return; }
 
   if (!data.dead || data.dead.length === 0) {
-    toast("همه‌ی کانفیگ‌ها زنده‌ان ✓");
+    toast("همه‌ی کانفیگ‌ها زنده‌اند");
     return;
   }
 
@@ -358,9 +413,9 @@ async function previewDeadConfigs(sub) {
   const indices = data.dead.map((d) => d.index);
 
   openModal(`
-    <h2>🧹 ${data.dead.length} کانفیگ مرده پیدا شد</h2>
+    <h2>${icon("broom")} ${data.dead.length} کانفیگ مرده</h2>
     <div style="max-height:260px;overflow-y:auto;margin:10px 0">${list}</div>
-    ${data.dead.length > 30 ? `<p class="muted">و ${data.dead.length - 30} تای دیگه...</p>` : ""}
+    ${data.dead.length > 30 ? `<p class="muted">و ${data.dead.length - 30} تای دیگر...</p>` : ""}
     <p class="muted" style="margin-top:8px">این کار قابل بازگشت نیست.</p>
     <div class="modal-actions">
       <button class="btn-outline btn" id="cancel-btn">انصراف</button>
@@ -374,7 +429,7 @@ async function previewDeadConfigs(sub) {
       state.currentSub = result;
       state.pingResults = null;
       closeModal();
-      toast(`${result.removed} کانفیگ حذف شد ✓`);
+      toast(`${result.removed} کانفیگ حذف شد`);
       render();
     } catch (e) { toast(e.message, true); }
   });
@@ -388,12 +443,12 @@ async function exportSub(id) {
   } catch (e) { toast(e.message, true); return; }
 
   openModal(`
-    <h2>📤 خروجی اشتراک</h2>
-    <p class="muted">این متن base64 آماده‌ی وارد کردن (import) به هر کلاینت VPNه.</p>
+    <h2>${icon("export")} خروجی اشتراک</h2>
+    <p class="muted">متن base64 آمادهٔ وارد کردن در کلاینت VPN.</p>
     <textarea id="export-text" rows="8" readonly>${esc(data.content)}</textarea>
     <div class="modal-actions">
       <button class="btn-outline btn" id="close-btn">بستن</button>
-      <button class="btn" id="copy-btn">کپی</button>
+      <button class="btn" id="copy-btn">${icon("copy", "icon-sm")} کپی</button>
     </div>
   `);
   document.getElementById("close-btn").addEventListener("click", closeModal);
@@ -402,33 +457,33 @@ async function exportSub(id) {
 
 function openNoteModal(sub) {
   openModal(`
-    <h2>📝 یادداشت «${esc(sub.name)}»</h2>
-    ${sub.note ? `<div class="muted" style="white-space:pre-wrap;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:.85rem;margin-bottom:10px">${esc(sub.note)}</div>` : ""}
-    <label>${sub.note ? "چیزی که بفرستی اضافه میشه (پاک نمیشه)" : "یادداشت جدید"}</label>
+    <h2>${icon("note")} یادداشت «${esc(sub.name)}»</h2>
+    ${sub.note ? `<div class="note-box" style="margin-bottom:10px">${esc(sub.note)}</div>` : ""}
+    <label>${sub.note ? "متن جدید به یادداشت اضافه می‌شود" : "یادداشت جدید"}</label>
     <textarea id="note-text"></textarea>
     <div class="modal-actions">
-      ${sub.note ? '<button class="btn-outline btn btn-danger" id="clear-btn">🗑 حذف کامل</button>' : ""}
+      ${sub.note ? `<button class="btn-outline btn btn-danger" id="clear-btn">${icon("trash", "icon-sm")} حذف کامل</button>` : ""}
       <button class="btn-outline btn" id="cancel-btn">انصراف</button>
       <button class="btn" id="save-btn">ذخیره</button>
     </div>
   `);
   document.getElementById("cancel-btn").addEventListener("click", closeModal);
+  document.getElementById("save-btn").addEventListener("click", async () => {
+    const text = document.getElementById("note-text").value.trim();
+    if (!text) { toast("متن خالی است.", true); return; }
+    try {
+      state.currentSub = await api("POST", `/api/subs/${sub.id}/note`, { note: text });
+      closeModal();
+      toast("یادداشت ذخیره شد");
+      render();
+    } catch (e) { toast(e.message, true); }
+  });
   const clearBtn = document.getElementById("clear-btn");
   if (clearBtn) clearBtn.addEventListener("click", async () => {
     try {
       state.currentSub = await api("POST", `/api/subs/${sub.id}/note`, { clear: true });
       closeModal();
-      toast("یادداشت حذف شد ✓");
-      render();
-    } catch (e) { toast(e.message, true); }
-  });
-  document.getElementById("save-btn").addEventListener("click", async () => {
-    const text = document.getElementById("note-text").value.trim();
-    if (!text) { toast("متن یادداشت خالیه.", true); return; }
-    try {
-      state.currentSub = await api("POST", `/api/subs/${sub.id}/note`, { note: text });
-      closeModal();
-      toast("یادداشت ذخیره شد ✓");
+      toast("یادداشت حذف شد");
       render();
     } catch (e) { toast(e.message, true); }
   });
@@ -437,130 +492,116 @@ function openNoteModal(sub) {
 function openRenameModal(sub, idx) {
   const cfg = sub.configs.find((c) => c.index === idx);
   openModal(`
-    <h2>✏️ رنیم کانفیگ</h2>
-    <p class="muted">اسم فعلی: ${esc(cfg ? cfg.remark : "")}</p>
+    <h2>${icon("edit")} رنیم کانفیگ</h2>
+    <p class="muted" style="margin-bottom:10px"><span class="badge">${esc(cfg.protocol)}</span> ${esc(cfg.remark || "(بدون نام)")}</p>
     <label>اسم جدید</label>
-    <input type="text" id="rename-text"/>
-    <p class="muted" style="margin-top:10px">این تغییر فقط برای گرفتن یه خروجی موقته و روی خودِ اشتراک ذخیره نمیشه؛ برای ذخیره‌ی دائمی از «ساخت اشتراک سفارشی» (تیک بزن و پایین صفحه «بساز») استفاده کن.</p>
+    <input type="text" id="rename-name" placeholder="اسم دلخواه"/>
     <div class="modal-actions">
       <button class="btn-outline btn" id="cancel-btn">انصراف</button>
-      <button class="btn" id="submit-btn">دریافت خروجی</button>
+      <button class="btn" id="submit-btn">رنیم و کپی</button>
     </div>
   `);
   document.getElementById("cancel-btn").addEventListener("click", closeModal);
   document.getElementById("submit-btn").addEventListener("click", async () => {
-    const name = document.getElementById("rename-text").value.trim();
-    if (!name) { toast("اسم نمی‌تونه خالی باشه.", true); return; }
+    const name = document.getElementById("rename-name").value.trim();
+    if (!name) { toast("اسم نمی‌تواند خالی باشد.", true); return; }
     try {
-      const res = await api("POST", `/api/subs/${sub.id}/configs/${idx}/rename`, { name });
-      openModal(`
-        <h2>✅ کانفیگ رنیم‌شده</h2>
-        <textarea id="renamed-text" rows="5" readonly>${esc(res.renamed)}</textarea>
-        <div class="modal-actions">
-          <button class="btn-outline btn" id="close-btn">بستن</button>
-          <button class="btn" id="copy-btn">کپی</button>
-        </div>
-      `);
-      document.getElementById("close-btn").addEventListener("click", closeModal);
-      document.getElementById("copy-btn").addEventListener("click", () => copyText(res.renamed));
+      const data = await api("POST", `/api/subs/${sub.id}/configs/${idx}/rename`, { name });
+      closeModal();
+      await copyText(data.renamed);
     } catch (e) { toast(e.message, true); }
   });
 }
 
-// ---------- سبد انتخاب (برای ساخت اشتراک سفارشی) ----------
+// ---------- سبد (cart) ساخت سفارشی ----------
 
 function toggleCart(sub, idx, checked) {
   const cfg = sub.configs.find((c) => c.index === idx);
+  if (!cfg) return;
   if (checked) {
-    state.cart.push({ sub_id: sub.id, sub_name: sub.name, index: idx, remark: cfg.remark, protocol: cfg.protocol, name: "" });
+    if (!state.cart.some((it) => it.sub_id === sub.id && it.index === idx)) {
+      state.cart.push({
+        sub_id: sub.id,
+        sub_name: sub.name,
+        index: idx,
+        remark: cfg.remark || "",
+        protocol: cfg.protocol,
+        name: "",
+      });
+    }
   } else {
     state.cart = state.cart.filter((it) => !(it.sub_id === sub.id && it.index === idx));
   }
-  render();
+  renderCartBar();
+  bindCartBarEvents();
 }
 
 function renderCartBar() {
-  if (state.cart.length === 0) return '<div class="cart-bar"></div>';
+  if (!state.cart.length) return `<div class="cart-bar" id="cart-bar"></div>`;
   return `
-    <div class="cart-bar show">
-      <span>🛒 ${state.cart.length} کانفیگ انتخاب شده</span>
-      <button class="btn-sm btn" id="cart-clear-btn">پاک کردن</button>
-      <button class="btn" id="cart-build-btn">🛠 ساخت اشتراک سفارشی</button>
+    <div class="cart-bar show" id="cart-bar">
+      <span class="count">${state.cart.length} کانفیگ انتخاب‌شده</span>
+      <button class="btn-sm btn" id="cart-clear">پاک کردن</button>
+      <button class="btn" id="cart-build">${icon("custom", "icon-sm")} ساخت اشتراک سفارشی</button>
     </div>
   `;
 }
 
 function bindCartBarEvents() {
-  const clearBtn = document.getElementById("cart-clear-btn");
-  if (clearBtn) clearBtn.addEventListener("click", () => {
-    state.cart = [];
-    render();
-  });
-  const buildBtn = document.getElementById("cart-build-btn");
-  if (buildBtn) buildBtn.addEventListener("click", openBuildModal);
+  const clear = document.getElementById("cart-clear");
+  if (clear) clear.addEventListener("click", () => { state.cart = []; render(); });
+  const build = document.getElementById("cart-build");
+  if (build) build.addEventListener("click", openBuildCustomModal);
 }
 
-function openBuildModal() {
+function openBuildCustomModal() {
   const itemsHtml = state.cart.map((it, i) => `
-    <div class="card-row">
-      <div>
-        <div style="font-size:.85rem">${esc(it.remark || "(بدون نام)")}</div>
-        <div class="muted" style="font-size:.72rem">از: ${esc(it.sub_name)}</div>
-      </div>
-      <input type="text" class="cart-name" data-i="${i}" placeholder="اسم دلخواه (اختیاری)" style="max-width:160px"/>
+    <div class="config-row">
+      <span class="badge">${esc(it.protocol)}</span>
+      <span class="remark">${esc(it.remark || "(بدون نام)")} <span class="muted">· ${esc(it.sub_name)}</span></span>
+      <input type="text" class="cart-name" data-i="${i}" placeholder="اسم دلخواه" style="width:120px;padding:6px 8px;font-size:.78rem" value="${esc(it.name)}"/>
     </div>
   `).join("");
 
   openModal(`
-    <h2>🛠 ساخت اشتراک سفارشی</h2>
+    <h2>${icon("custom")} ساخت اشتراک سفارشی</h2>
+    <div style="max-height:200px;overflow-y:auto;margin-bottom:8px">${itemsHtml}</div>
     <label>اسم اشتراک</label>
-    <input type="text" id="build-name" placeholder="مثلا: انتخابی من - گیمینگ"/>
-    <label>مدت اعتبار</label>
-    <select id="build-expiry" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:8px">
-      <option value="0">بدون محدودیت</option>
-      <option value="7">۷ روز</option>
-      <option value="30">۳۰ روز</option>
-      <option value="90">۹۰ روز</option>
-      <option value="180">۱۸۰ روز</option>
-    </select>
-    <label>کانفیگ‌های انتخابی (اسم دلخواه اختیاریه)</label>
-    <div style="max-height:220px;overflow-y:auto">${itemsHtml}</div>
+    <input type="text" id="build-name" placeholder="مثلاً: انتخابی گیمینگ"/>
+    <label>مدت اعتبار (روز) — ۰ = بدون انقضا</label>
+    <input type="number" id="build-expiry" value="0" min="0" dir="ltr"/>
     <div class="modal-actions">
       <button class="btn-outline btn" id="cancel-btn">انصراف</button>
-      <button class="btn" id="submit-btn">بساز</button>
+      <button class="btn" id="submit-btn">ساخت</button>
     </div>
   `);
   document.getElementById("cancel-btn").addEventListener("click", closeModal);
   document.getElementById("submit-btn").addEventListener("click", async () => {
     const name = document.getElementById("build-name").value.trim();
-    if (!name) { toast("اسم اجباریه.", true); return; }
-    const expiry_days = parseInt(document.getElementById("build-expiry").value);
+    const expiry_days = parseInt(document.getElementById("build-expiry").value) || 0;
+    if (!name) { toast("اسم اشتراک اجباری است.", true); return; }
     document.querySelectorAll(".cart-name").forEach((inp) => {
-      state.cart[parseInt(inp.dataset.i)].name = inp.value.trim();
+      const i = parseInt(inp.dataset.i);
+      state.cart[i].name = inp.value.trim();
     });
-    const items = state.cart.map((it) => ({ sub_id: it.sub_id, index: it.index, name: it.name || undefined }));
-
+    const items = state.cart.map((it) => ({
+      sub_id: it.sub_id,
+      index: it.index,
+      name: it.name || undefined,
+    }));
     const btn = document.getElementById("submit-btn");
-    btn.disabled = true; btn.textContent = "در حال ساخت...";
+    btn.disabled = true;
     try {
-      const gen = await api("POST", "/api/build-custom", { name, expiry_days, items });
-      state.cart = [];
+      const gen = await api("POST", "/api/build-custom", { name, items, expiry_days });
       closeModal();
-      openModal(`
-        <h2>✅ اشتراک سفارشی ساخته شد</h2>
-        <p class="muted">${gen.config_count} کانفیگ</p>
-        <label>لینک اشتراک</label>
-        <code class="url">${esc(gen.url)}</code>
-        <div class="modal-actions">
-          <button class="btn-outline btn" id="close-btn">بستن</button>
-          <button class="btn" id="copy-btn">کپی لینک</button>
-        </div>
-      `);
-      document.getElementById("close-btn").addEventListener("click", () => { closeModal(); render(); });
-      document.getElementById("copy-btn").addEventListener("click", () => copyText(gen.url));
+      state.cart = [];
+      toast("اشتراک سفارشی ساخته شد");
+      state.tab = "generated";
+      await loadGenerated();
+      if (gen && gen.id) openGen(gen.id);
     } catch (e) {
       toast(e.message, true);
-      btn.disabled = false; btn.textContent = "بساز";
+      btn.disabled = false;
     }
   });
 }
@@ -575,29 +616,34 @@ async function loadGenerated() {
 }
 
 function renderGeneratedList() {
-  if (!state.generated.length) {
-    return '<div class="empty-state">هنوز اشتراک سفارشی نساختی. از داخل یه اشتراک، چندتا کانفیگ تیک بزن و «ساخت اشتراک سفارشی» رو بزن.</div>';
-  }
   const items = state.generated.map((g) => `
     <div class="list-item" data-open-gen="${g.id}">
       <div>
         <div class="title">${esc(g.name)} ${g.expired ? '<span class="badge badge-expired">منقضی</span>' : ""}</div>
-        <div class="subtitle">${g.config_count} کانفیگ · ساخته‌شده ${fmtDate(g.created_at)}</div>
+        <div class="subtitle">${g.config_count} کانفیگ · ${fmtDate(g.created_at)}</div>
       </div>
-      <span>›</span>
+      <span class="chevron">${icon("chevron")}</span>
     </div>
   `).join("");
 
   setTimeout(() => {
     app.querySelectorAll("[data-open-gen]").forEach((el) => {
-      el.addEventListener("click", () => openGenerated(parseInt(el.dataset.openGen)));
+      el.addEventListener("click", () => openGen(parseInt(el.dataset.openGen)));
     });
   });
 
-  return items;
+  return `
+    <div class="page-header">
+      <div>
+        <h2>${icon("custom")} اشتراک‌های سفارشی</h2>
+        <p class="page-desc">لینک‌های عمومی که خودت ساختی</p>
+      </div>
+    </div>
+    ${state.generated.length ? items : `<div class="empty-state">${icon("empty", "icon-lg")}<div>هنوز اشتراک سفارشی نساختی.<br/>از تب اشتراک‌ها کانفیگ‌ها را تیک بزن.</div></div>`}
+  `;
 }
 
-async function openGenerated(id) {
+async function openGen(id) {
   try {
     state.currentGen = await api("GET", `/api/generated/${id}`);
     state.view = "gen-detail";
@@ -626,29 +672,29 @@ function renderGenDetail(gen) {
     : "بدون محدودیت";
 
   return `
-    <div class="back-link" id="back-to-gens">« بازگشت به اشتراک‌های سفارشی</div>
+    <button class="back-link" id="back-to-gens">${icon("back", "icon-sm")} بازگشت</button>
     <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+      <div class="card-header">
         <div>
-          <div class="title" style="font-size:1.1rem;font-weight:700">${esc(gen.name)}</div>
-          <div class="subtitle">${gen.config_count} کانفیگ · ساخته‌شده ${fmtDate(gen.created_at)} · انقضا: ${expLabel}</div>
+          <div class="detail-title">${esc(gen.name)}</div>
+          <div class="detail-meta">${gen.config_count} کانفیگ · ${fmtDate(gen.created_at)} · انقضا: ${expLabel}</div>
         </div>
-        <button class="btn-sm btn btn-danger" id="delete-gen-btn">🗑 حذف</button>
+        <button class="btn-sm btn btn-danger" id="delete-gen-btn">${icon("trash", "icon-sm")} حذف</button>
       </div>
       <label>لینک اشتراک</label>
       <code class="url">${esc(gen.url)}</code>
-      <div style="margin-top:10px">
-        <button class="btn-sm btn" id="copy-gen-url">کپی لینک</button>
+      <div class="action-bar">
+        <button class="btn-sm btn" id="copy-gen-url">${icon("copy", "icon-sm")} کپی لینک</button>
       </div>
     </div>
-    <div class="card">${rows}</div>
+    <div class="card">${rows || '<div class="empty-state">کانفیگی نیست.</div>'}</div>
   `;
 }
 
 function confirmDeleteGen(gen) {
   openModal(`
-    <h2>حذف اشتراک سفارشی</h2>
-    <p class="muted">مطمئنی می‌خوای «${esc(gen.name)}» حذف بشه؟ لینکش دیگه کار نمی‌کنه.</p>
+    <h2>${icon("trash")} حذف اشتراک سفارشی</h2>
+    <p class="muted">مطمئنی می‌خوای «${esc(gen.name)}» حذف بشه؟ لینکش دیگر کار نمی‌کند.</p>
     <div class="modal-actions">
       <button class="btn-outline btn" id="cancel-btn">انصراف</button>
       <button class="btn btn-danger" id="confirm-btn">بله، حذف کن</button>
@@ -659,7 +705,7 @@ function confirmDeleteGen(gen) {
     try {
       await api("DELETE", `/api/generated/${gen.id}`);
       closeModal();
-      toast("حذف شد ✓");
+      toast("حذف شد");
       state.view = "list";
       state.currentGen = null;
       await loadGenerated();

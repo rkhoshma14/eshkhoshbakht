@@ -2,6 +2,19 @@
 احراز هویت پنل وب:
 - Telegram Login Widget
 - ورود با یوزرنیم / پسورد (متغیرهای محیطی PANEL_USER و PANEL_PASSWORD)
+
+نحوه‌ی کار تلگرام:
+۱. کاربر تو صفحه‌ی لاگین رو دکمه‌ی "ورود با تلگرام" می‌زنه.
+۲. تلگرام کاربر رو با id/hash/... به /panel/auth/callback ریدایرکت می‌کنه.
+۳. hash رو با HMAC-SHA256 و کلید مشتق‌شده از BOT_TOKEN وریفای می‌کنیم.
+۴. اگه id توی ADMIN_IDS بود، یه سشن می‌سازیم و کوکی می‌ذاریم.
+
+نحوه‌ی کار یوزرنیم/پسورد:
+۱. کاربر فرم لاگین رو پر می‌کنه و به /panel/auth/password پست می‌کنه.
+۲. با PANEL_USER و PANEL_PASSWORD مقایسه می‌شه (مقایسه‌ی زمان‌ثابت).
+۳. سشن با user_id مربوط به ادمین ساخته می‌شه (اولین ADMIN_IDS یا PANEL_USER_ID).
+
+نکته: برای ویجت تلگرام باید دامنه‌ی سایت رو با /setdomain به BotFather بدی.
 """
 import hashlib
 import hmac
@@ -14,16 +27,21 @@ from aiohttp import web
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 ADMIN_IDS = {int(x) for x in os.environ.get("ADMIN_IDS", "").split(",") if x.strip()}
 
+# ورود با یوزرنیم / پسورد (اختیاری)
 PANEL_USER = os.environ.get("PANEL_USER", "").strip()
 PANEL_PASSWORD = os.environ.get("PANEL_PASSWORD", "").strip()
+# اگر ست بشه، سشن پسوردی با این user_id ساخته می‌شه؛ وگرنه اولین ADMIN_IDS
 _panel_uid_raw = os.environ.get("PANEL_USER_ID", "").strip()
 PANEL_USER_ID: int | None = int(_panel_uid_raw) if _panel_uid_raw.isdigit() else None
 
 COOKIE_NAME = "kh_session"
-SESSION_TTL = 30 * 24 * 3600
-AUTH_MAX_AGE = 86400
+SESSION_TTL = 30 * 24 * 3600  # ۳۰ روز
+AUTH_MAX_AGE = 86400  # حداکثر قدمت داده‌ی ورود تلگرام (ثانیه)
 
+# بعد از bot.get_me() توی main() پر میشه، برای نمایش تو صفحه‌ی لاگین
 BOT_USERNAME: str = ""
+
+# سشن‌ها فقط تو حافظه نگه داشته میشن؛ با ری‌استارت شدن سرویس، باید دوباره لاگین کنی.
 _sessions: dict[str, dict] = {}
 
 
@@ -32,18 +50,23 @@ def password_login_enabled() -> bool:
 
 
 def panel_enabled() -> bool:
+    """پنل وقتی فعاله که یا ADMIN_IDS ست شده باشه یا یوزرنیم/پسورد پنل."""
     return bool(ADMIN_IDS) or password_login_enabled()
 
 
 def _password_session_user_id() -> int | None:
+    """user_id که برای سشن پسوردی استفاده می‌شه تا داده‌ها با ربات یکی باشن."""
     if PANEL_USER_ID is not None:
         return PANEL_USER_ID
     if ADMIN_IDS:
         return sorted(ADMIN_IDS)[0]
+    # فقط پسورد ست شده و ADMIN_IDS خالیه — یه id ثابت
     return 1
 
 
 def verify_telegram_login(data: dict) -> int | None:
+    """داده‌ی برگشتی از Telegram Login Widget رو وریفای می‌کنه.
+    در صورت معتبر و مجاز بودن، user_id رو برمی‌گردونه، وگرنه None."""
     received_hash = data.get("hash")
     if not received_hash:
         return None
@@ -74,6 +97,7 @@ def verify_telegram_login(data: dict) -> int | None:
 
 
 def verify_password_login(username: str, password: str) -> int | None:
+    """یوزرنیم/پسورد رو چک می‌کنه؛ در صورت موفقیت user_id سشن رو برمی‌گردونه."""
     if not password_login_enabled():
         return None
     if not username or not password:

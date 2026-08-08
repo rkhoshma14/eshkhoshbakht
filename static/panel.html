@@ -3,12 +3,19 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="theme-color" content="#0a1628"/>
 <title>پنل خوشبخت</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="/panel/static/style.css"/>
 </head>
 <body>
-<div id="app" class="app-shell">
-  <div class="spinner">در حال بارگذاری...</div>
+<div id="app" class="app-root">
+  <div class="boot-spinner">
+    <div class="boot-ring"></div>
+    <span>در حال بارگذاری…</span>
+  </div>
 </div>
 <div class="toast" id="toast"></div>
 <script src="/panel/static/app.js"></script>

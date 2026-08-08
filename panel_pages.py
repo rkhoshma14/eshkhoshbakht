@@ -11,6 +11,11 @@ import auth
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+_LOGO_SVG = """<svg viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M12 3l2.2 4.5L19 8.3l-3.5 3.4.8 4.8L12 14.5 7.7 16.5l.8-4.8L5 8.3l4.8-.8L12 3z"/>
+  <circle cx="12" cy="12" r="2"/>
+</svg>"""
+
 
 def _login_html(error: str = "") -> str:
     bot_username = auth.BOT_USERNAME
@@ -24,13 +29,13 @@ def _login_html(error: str = "") -> str:
           data-request-access="write"></script>
         """
     else:
-        widget = "<p class='muted'>یوزرنیم ربات هنوز مشخص نشده، چند لحظه صبر کن و صفحه رو رفرش کن.</p>"
+        widget = "<p class='muted'>یوزرنیم ربات هنوز مشخص نشده؛ چند لحظه صبر کن و صفحه را رفرش کن.</p>"
 
     disabled_notice = ""
     if not auth.panel_enabled():
         disabled_notice = (
-            "<p class='warn'>⚠️ پنل غیرفعاله. یا <code>ADMIN_IDS</code> رو ست کن "
-            "یا <code>PANEL_USER</code> و <code>PANEL_PASSWORD</code> رو در Railway تنظیم کن.</p>"
+            "<p class='warn'>پنل غیرفعال است. یا <code>ADMIN_IDS</code> را ست کن "
+            "یا <code>PANEL_USER</code> و <code>PANEL_PASSWORD</code> را در Railway تنظیم کن.</p>"
         )
 
     error_html = f"<p class='error-msg'>{html_escape(error)}</p>" if error else ""
@@ -44,32 +49,37 @@ def _login_html(error: str = "") -> str:
       <input type="text" id="username" name="username" required autocomplete="username" dir="ltr"/>
       <label for="password">پسورد</label>
       <input type="password" id="password" name="password" required autocomplete="current-password" dir="ltr"/>
-      <button type="submit" class="btn login-btn">ورود با یوزرنیم</button>
+      <button type="submit" class="btn login-btn">ورود</button>
     </form>
         """
 
     if auth.ADMIN_IDS:
         tg_section = f"""
-    <p class="muted">ورود با اکانت تلگرام ادمین</p>
+    <p class="tagline">ورود امن با اکانت تلگرام ادمین</p>
     <div class="widget-wrap">{widget}</div>
         """
     elif auth.password_login_enabled():
-        tg_section = "<p class='muted'>با یوزرنیم و پسورد وارد شو</p>"
+        tg_section = '<p class="tagline">با یوزرنیم و پسورد وارد شو</p>'
     else:
-        tg_section = f"<div class='widget-wrap'>{widget}</div>"
+        tg_section = f'<div class="widget-wrap">{widget}</div>'
 
     return f"""<!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>ورود به پنل خوشبخت</title>
+<meta name="theme-color" content="#0a1628"/>
+<title>ورود · خوشبخت</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="/panel/static/style.css"/>
 </head>
 <body class="login-body">
   <div class="login-card">
-    <div class="logo">⚡</div>
-    <h1>پنل خوشبخت</h1>
+    <div class="login-logo">{_LOGO_SVG}</div>
+    <h1>خوشبخت</h1>
+    <p class="tagline" style="margin-bottom:4px">پنل مدیریت تونل و اشتراک</p>
     {tg_section}
     {error_html}
     {password_form}
@@ -90,9 +100,14 @@ async def handle_auth_callback(request: web.Request) -> web.Response:
     if user_id is None:
         return web.Response(
             text=(
-                "<div style='font-family:tahoma;text-align:center;margin-top:20vh;color:#f87171'>"
-                "<h2>ورود ناموفق بود</h2><p>یا داده‌ی ورود نامعتبره، یا این آیدی تلگرام تو ADMIN_IDS نیست.</p>"
-                "<a href='/panel/login' style='color:#38bdf8'>برگشت به صفحه‌ی ورود</a></div>"
+                "<!DOCTYPE html><html lang='fa' dir='rtl'><head><meta charset='utf-8'/>"
+                "<link href='https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700&display=swap' rel='stylesheet'/>"
+                "<style>body{font-family:Vazirmatn,Tahoma,sans-serif;background:#070f1a;color:#e8eef6;"
+                "display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center}"
+                "a{color:#d4af37}</style></head><body><div>"
+                "<h2 style='color:#f07178'>ورود ناموفق بود</h2>"
+                "<p style='color:#6b8299'>دادهٔ ورود نامعتبر است یا این آیدی در ADMIN_IDS نیست.</p>"
+                "<a href='/panel/login'>برگشت به صفحهٔ ورود</a></div></body></html>"
             ),
             content_type="text/html",
             charset="utf-8",
@@ -118,7 +133,7 @@ async def handle_password_login(request: web.Request) -> web.Response:
         raise web.HTTPFound("/panel/login")
 
     if not auth.password_login_enabled():
-        raise web.HTTPFound("/panel/login?error=" + quote("ورود با یوزرنیم غیرفعاله"))
+        raise web.HTTPFound("/panel/login?error=" + quote("ورود با یوزرنیم غیرفعال است"))
 
     data = await request.post()
     username = (data.get("username") or "").strip()
@@ -126,7 +141,7 @@ async def handle_password_login(request: web.Request) -> web.Response:
 
     user_id = auth.verify_password_login(username, password)
     if user_id is None:
-        raise web.HTTPFound("/panel/login?error=" + quote("یوزرنیم یا پسورد اشتباهه"))
+        raise web.HTTPFound("/panel/login?error=" + quote("یوزرنیم یا پسورد اشتباه است"))
 
     session_id = auth.create_session(user_id)
     resp = web.HTTPFound("/panel")
