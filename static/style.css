@@ -87,7 +87,20 @@ a:hover { color: #e8c84a; }
 .login-body {
   display: flex; align-items: center; justify-content: center;
   min-height: 100vh; padding: 24px; position: relative; z-index: 1;
+  overflow: hidden;
 }
+.login-body::after {
+  content: "";
+  position: absolute; top: 50%; left: 50%; width: 640px; height: 640px;
+  transform: translate(-50%, -50%);
+  background:
+    radial-gradient(circle, transparent 0 119px, var(--border) 119px 120px, transparent 120px),
+    radial-gradient(circle, transparent 0 175px, var(--border) 175px 176px, transparent 176px),
+    radial-gradient(circle, transparent 0 235px, rgba(212, 175, 55, 0.09) 235px 236px, transparent 236px),
+    radial-gradient(circle, transparent 0 310px, rgba(45, 212, 191, 0.05) 310px 311px, transparent 311px);
+  pointer-events: none; z-index: 0;
+}
+.login-card { position: relative; z-index: 1; }
 .login-card {
   background: var(--surface);
   border: 1px solid var(--border-strong);
@@ -355,8 +368,37 @@ a:hover { color: #e8c84a; }
   text-transform: uppercase; letter-spacing: 0.03em;
 }
 .badge-ms { background: var(--teal-dim); color: var(--teal); }
+.badge-ping-good { background: var(--teal-dim); color: var(--teal); }
+.badge-ping-mid { background: var(--gold-dim); color: var(--gold); }
+.badge-ping-bad { background: var(--danger-dim); color: var(--danger); }
 .badge-dead { background: var(--danger-dim); color: var(--danger); }
 .badge-expired { background: var(--danger-dim); color: var(--danger); }
+
+/* Overview / dashboard stat cards */
+.stat-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+  margin-bottom: 20px;
+}
+.stat-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px 18px; position: relative; overflow: hidden;
+}
+.stat-card::before {
+  content: ""; position: absolute; inset-inline-start: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--accent, var(--gold));
+}
+.stat-label {
+  display: flex; align-items: center; gap: 7px;
+  color: var(--muted); font-size: 0.76rem;
+}
+.stat-label .icon { color: var(--accent, var(--gold)); width: 0.95em; height: 0.95em; }
+.stat-value {
+  font-family: var(--mono); font-size: 1.55rem; font-weight: 700; margin-top: 8px;
+  direction: ltr; text-align: right;
+}
+@media (max-width: 768px) {
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+}
 
 input[type=text], input[type=url], input[type=number], input[type=password], textarea, select {
   width: 100%; background: var(--bg-elevated);

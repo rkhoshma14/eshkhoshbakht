@@ -1,7 +1,7 @@
 // ============ پنل خوشبخت — منطق اصلی اپ ============
 
 const state = {
-  tab: "subs",
+  tab: "overview",
   view: "list",
   subs: [],
   currentSub: null,
@@ -121,6 +121,9 @@ async function boot() {
     app.innerHTML = `<div class="empty-state">${icon("empty", "icon-lg")}<div>خطا: ${esc(e.message)}</div></div>`;
     return;
   }
+  try {
+    state.generated = await api("GET", "/api/generated");
+  } catch (e) { /* آمار سفارشی‌ها اختیاریه، جلوی بوت رو نمی‌گیره */ }
   render();
 }
 
@@ -143,6 +146,9 @@ function renderShell(body) {
           </div>
         </div>
         <nav class="nav-section">
+          <button class="nav-item ${state.tab === "overview" && showNav ? "active" : ""}" data-tab="overview">
+            ${icon("logo")} داشبورد
+          </button>
           <button class="nav-item ${state.tab === "subs" && showNav ? "active" : ""}" data-tab="subs">
             ${icon("subs")} اشتراک‌ها
           </button>
@@ -157,6 +163,7 @@ function renderShell(body) {
       <main class="main">${body}</main>
     </div>
     <nav class="mobile-nav">
+      <button class="${state.tab === "overview" ? "active" : ""}" data-tab="overview">${icon("logo")}<span>داشبورد</span></button>
       <button class="${state.tab === "subs" ? "active" : ""}" data-tab="subs">${icon("subs")}<span>اشتراک‌ها</span></button>
       <button class="${state.tab === "generated" ? "active" : ""}" data-tab="generated">${icon("custom")}<span>سفارشی</span></button>
     </nav>
@@ -170,6 +177,8 @@ function render() {
     body = renderSubDetail(state.currentSub);
   } else if (state.view === "gen-detail" && state.currentGen) {
     body = renderGenDetail(state.currentGen);
+  } else if (state.tab === "overview") {
+    body = renderOverview();
   } else if (state.tab === "subs") {
     body = renderSubsList();
   } else {
@@ -190,6 +199,70 @@ function bindTopLevelEvents() {
       else render();
     });
   });
+}
+
+// ================= داشبورد (نمای کلی) =================
+
+function renderOverview() {
+  const totalSubs = state.subs.length;
+  const totalConfigs = state.subs.reduce((sum, s) => sum + (s.config_count || 0), 0);
+  const withNote = state.subs.filter((s) => s.note).length;
+  const totalGenerated = state.generated.length;
+
+  const recent = [...state.subs]
+    .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
+    .slice(0, 5);
+
+  const recentHtml = recent.length
+    ? recent.map((s) => `
+      <div class="list-item" data-open-sub="${s.id}">
+        <div>
+          <div class="title">${esc(s.name)}</div>
+          <div class="subtitle">${s.config_count} کانفیگ · ${fmtDate(s.updated_at)}${s.note ? " · یادداشت" : ""}</div>
+        </div>
+        <span class="chevron">${icon("chevron")}</span>
+      </div>`).join("")
+    : `<div class="empty-state">${icon("empty", "icon-lg")}<div>هنوز اشتراکی اضافه نکردی.</div></div>`;
+
+  setTimeout(() => {
+    app.querySelectorAll("[data-open-sub]").forEach((el) => {
+      el.addEventListener("click", () => openSub(parseInt(el.dataset.openSub)));
+    });
+    const addBtn = document.getElementById("overview-add-btn");
+    if (addBtn) addBtn.addEventListener("click", openAddSubModal);
+  });
+
+  return `
+    <div class="page-header">
+      <div>
+        <h2>${icon("logo")} داشبورد</h2>
+        <p class="page-desc">یک نگاه کلی به اشتراک‌ها و کانفیگ‌هات</p>
+      </div>
+      <button class="btn" id="overview-add-btn">${icon("plus")} افزودن اشتراک</button>
+    </div>
+    <div class="stat-grid">
+      <div class="stat-card" style="--accent:var(--gold)">
+        <div class="stat-label">${icon("subs")} کل اشتراک‌ها</div>
+        <div class="stat-value">${totalSubs}</div>
+      </div>
+      <div class="stat-card" style="--accent:var(--teal)">
+        <div class="stat-label">${icon("link")} کل کانفیگ‌ها</div>
+        <div class="stat-value">${totalConfigs}</div>
+      </div>
+      <div class="stat-card" style="--accent:var(--teal)">
+        <div class="stat-label">${icon("note")} یادداشت‌دار</div>
+        <div class="stat-value">${withNote}</div>
+      </div>
+      <div class="stat-card" style="--accent:var(--gold)">
+        <div class="stat-label">${icon("custom")} اشتراک سفارشی</div>
+        <div class="stat-value">${totalGenerated}</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="detail-title" style="font-size:.95rem">آخرین اشتراک‌ها</div></div>
+      ${recentHtml}
+    </div>
+  `;
 }
 
 // ================= تب اشتراک‌ها =================
@@ -277,9 +350,12 @@ function renderSubDetail(sub) {
     const ms = state.pingResults ? state.pingResults[c.index] : undefined;
     let msBadge = "";
     if (ms !== undefined) {
-      msBadge = ms === null
-        ? '<span class="badge badge-dead">timeout</span>'
-        : `<span class="badge badge-ms">${Math.round(ms)} ms</span>`;
+      if (ms === null) {
+        msBadge = '<span class="badge badge-dead">تایم‌اوت</span>';
+      } else {
+        const tier = ms < 90 ? "badge-ping-good" : ms < 180 ? "badge-ping-mid" : "badge-ping-bad";
+        msBadge = `<span class="badge ${tier}">${Math.round(ms)} ms</span>`;
+      }
     }
     return `
       <div class="config-row">
