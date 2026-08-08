@@ -527,6 +527,13 @@ def _build_panel_html(gen: dict, public_url: str) -> str:
   .actions {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }}
   .actions .btn {{ flex: 1; min-width: 120px; text-align: center; }}
   .grid {{ display: flex; flex-direction: column; gap: 10px; }}
+  .qr-wrap {{
+    display: flex; align-items: center; justify-content: center;
+    background: #ffffff; border-radius: 14px; padding: 16px;
+    margin-bottom: 10px;
+  }}
+  .qr-wrap svg {{ width: 200px; height: 200px; display: block; }}
+  .qr-hint {{ color: var(--muted); font-size: .78rem; text-align: center; }}
   .card {{
     background: var(--bg); border: 1px solid var(--border);
     border-radius: 12px; padding: 12px 14px;
@@ -570,14 +577,21 @@ def _build_panel_html(gen: dict, public_url: str) -> str:
     </div>
   </div>
   <div class="panel">
+    <h2>کد QR</h2>
+    <div class="qr-wrap" id="qr-wrap"></div>
+    <p class="qr-hint">با اسکن این کد توسط اپلیکیشن VPN، اشتراک مستقیم اضافه می‌شود</p>
+  </div>
+  <div class="panel">
     <h2>کانفیگ‌ها</h2>
     <div class="grid">{configs_block}</div>
   </div>
   <footer>برای استفاده در کلاینت، لینک اشتراک را اضافه کنید</footer>
 </div>
 <div class="toast" id="toast">کپی شد ✓</div>
+<script src="/panel/static/vendor/qrcode.js"></script>
 <script>
 const SUB_B64 = {repr(encoded)};
+const SUB_URL = {repr(public_url)};
 function showToast(msg) {{
   const t = document.getElementById('toast');
   t.textContent = msg || 'کپی شد ✓';
@@ -599,6 +613,16 @@ function copyConfig(i) {{
   const el = document.getElementById('cfg-' + i);
   if (el) copyText(el.textContent);
 }}
+(function renderQr() {{
+  try {{
+    const qr = qrcode(0, 'M');
+    qr.addData(SUB_URL);
+    qr.make();
+    document.getElementById('qr-wrap').innerHTML = qr.createSvgTag({{ cellSize: 5, margin: 2 }});
+  }} catch (e) {{
+    document.getElementById('qr-wrap').outerHTML = '';
+  }}
+}})();
 </script>
 </body>
 </html>
