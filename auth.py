@@ -2,8 +2,9 @@
 احراز هویت پنل وب:
 - Telegram Login Widget
 - ورود با یوزرنیم / پسورد (متغیرهای محیطی PANEL_USER و PANEL_PASSWORD)
+- Telegram Mini App (initData) — برای وقتی پنل داخل خودِ تلگرام باز میشه
 
-نحوه‌ی کار تلگرام:
+نحوه‌ی کار تلگرام (Login Widget):
 ۱. کاربر تو صفحه‌ی لاگین رو دکمه‌ی "ورود با تلگرام" می‌زنه.
 ۲. تلگرام کاربر رو با id/hash/... به /panel/auth/callback ریدایرکت می‌کنه.
 ۳. hash رو با HMAC-SHA256 و کلید مشتق‌شده از BOT_TOKEN وریفای می‌کنیم.
@@ -14,13 +15,22 @@
 ۲. با PANEL_USER و PANEL_PASSWORD مقایسه می‌شه (مقایسه‌ی زمان‌ثابت).
 ۳. سشن با user_id مربوط به ادمین ساخته می‌شه (اولین ADMIN_IDS یا PANEL_USER_ID).
 
+نحوه‌ی کار Mini App:
+۱. کاربر از داخل ربات دکمه‌ی "باز کردن پنل" رو می‌زنه، تلگرام صفحه‌ی /panel/miniapp رو
+   با initData امضاشده باز می‌کنه (بدون نیاز به کلیک یا رمز اضافه).
+۲. initData یه رشته‌ی query-string مانند با فیلد hash است؛ کلید HMAC اینجا فرق داره:
+   secret_key = HMAC-SHA256(key="WebAppData", msg=BOT_TOKEN)
+۳. اگه معتبر بود و id توی ADMIN_IDS بود، سشن ساخته و کوکی ست میشه، دقیقا مثل بقیه.
+
 نکته: برای ویجت تلگرام باید دامنه‌ی سایت رو با /setdomain به BotFather بدی.
 """
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import time
+from urllib.parse import parse_qsl
 
 from aiohttp import web
 
@@ -96,6 +106,49 @@ def verify_telegram_login(data: dict) -> int | None:
     return user_id
 
 
+def verify_webapp_init_data(raw_init_data: str) -> int | None:
+    """initData ارسالی از Telegram Mini App رو وریفای می‌کنه.
+    برخلاف Login Widget، اینجا کلید HMAC از "WebAppData" + BOT_TOKEN مشتق میشه
+    (طبق مستندات رسمی تلگرام برای Web Apps)."""
+    if not raw_init_data:
+        return None
+
+    try:
+        pairs = parse_qsl(raw_init_data, keep_blank_values=True, strict_parsing=True)
+    except ValueError:
+        return None
+    data = dict(pairs)
+
+    received_hash = data.pop("hash", None)
+    if not received_hash:
+        return None
+
+    check_string = "\n".join(f"{k}={v}" for k, v in sorted(data.items()))
+    secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+    computed_hash = hmac.new(secret_key, check_string.encode(), hashlib.sha256).hexdigest()
+
+    if not hmac.compare_digest(computed_hash, received_hash):
+        return None
+
+    try:
+        auth_date = int(data.get("auth_date", 0))
+    except (TypeError, ValueError):
+        return None
+    if time.time() - auth_date > AUTH_MAX_AGE:
+        return None
+
+    try:
+        user_obj = json.loads(data.get("user", "{}"))
+        user_id = int(user_obj["id"])
+    except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+        return None
+
+    if not ADMIN_IDS or user_id not in ADMIN_IDS:
+        return None
+
+    return user_id
+
+
 def verify_password_login(username: str, password: str) -> int | None:
     """یوزرنیم/پسورد رو چک می‌کنه؛ در صورت موفقیت user_id سشن رو برمی‌گردونه."""
     if not password_login_enabled():
@@ -137,6 +190,8 @@ _PUBLIC_PANEL_PATHS = {
     "/panel/auth/callback",
     "/panel/auth/password",
     "/panel/logout",
+    "/panel/miniapp",
+    "/api/auth/webapp",
 }
 
 

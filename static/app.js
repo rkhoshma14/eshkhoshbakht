@@ -1,5 +1,12 @@
 // ============ پنل خوشبخت — منطق اصلی اپ ============
 
+// اگه داخل Telegram Mini App باز شده باشیم initData پر خواهد بود؛
+// چون اسکریپت telegram-web-app.js بیرون تلگرام هم شیء WebApp رو می‌سازه،
+// صرفِ وجودش کافی نیست و باید initData رو هم چک کرد.
+const TG = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData)
+  ? window.Telegram.WebApp
+  : null;
+
 const state = {
   tab: "overview",
   view: "list",
@@ -131,10 +138,12 @@ async function boot() {
 
 function renderShell(body) {
   const showNav = state.view === "list";
+  const logoutBtn = TG ? "" : `<a href="/panel/logout" class="btn-sm btn" style="text-decoration:none">${icon("logout", "icon-sm")} خروج</a>`;
+  const logoutSidebar = TG ? "" : `<a class="nav-item" href="/panel/logout">${icon("logout")} خروج</a>`;
   return `
     <div class="mobile-bar">
       <strong>${icon("logo")} خوشبخت</strong>
-      <a href="/panel/logout" class="btn-sm btn" style="text-decoration:none">${icon("logout", "icon-sm")} خروج</a>
+      ${logoutBtn}
     </div>
     <div class="app-layout">
       <aside class="sidebar">
@@ -156,9 +165,7 @@ function renderShell(body) {
             ${icon("custom")} اشتراک‌های سفارشی
           </button>
         </nav>
-        <div class="sidebar-footer">
-          <a class="nav-item" href="/panel/logout">${icon("logout")} خروج</a>
-        </div>
+        <div class="sidebar-footer">${logoutSidebar}</div>
       </aside>
       <main class="main">${body}</main>
     </div>
@@ -169,6 +176,22 @@ function renderShell(body) {
     </nav>
     ${renderCartBar()}
   `;
+}
+
+// ---------- دکمه‌ی برگشت نیتیو تلگرام (فقط داخل Mini App) ----------
+
+function tgBackHandler() {
+  if (state.view === "sub-detail") { state.view = "list"; state.currentSub = null; render(); }
+  else if (state.view === "gen-detail") { state.view = "list"; state.currentGen = null; render(); }
+}
+if (TG) {
+  TG.BackButton.onClick(tgBackHandler);
+}
+
+function syncTgBackButton() {
+  if (!TG) return;
+  if (state.view === "sub-detail" || state.view === "gen-detail") TG.BackButton.show();
+  else TG.BackButton.hide();
 }
 
 function render() {
@@ -188,6 +211,7 @@ function render() {
   app.innerHTML = renderShell(body);
   bindTopLevelEvents();
   bindCartBarEvents();
+  syncTgBackButton();
 }
 
 function bindTopLevelEvents() {
@@ -787,6 +811,15 @@ function confirmDeleteGen(gen) {
       await loadGenerated();
     } catch (e) { toast(e.message, true); }
   });
+}
+
+if (TG) {
+  try {
+    TG.ready();
+    TG.expand();
+    TG.setHeaderColor("#070f1a");
+    TG.setBackgroundColor("#070f1a");
+  } catch (e) { /* نسخه‌های قدیمی کلاینت تلگرام ممکنه این متدها رو نداشته باشن */ }
 }
 
 boot();

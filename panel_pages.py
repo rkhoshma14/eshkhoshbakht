@@ -89,6 +89,18 @@ def _login_html(error: str = "") -> str:
 </html>"""
 
 
+def _set_session_cookie(resp: web.StreamResponse, session_id: str) -> None:
+    resp.set_cookie(
+        auth.COOKIE_NAME,
+        session_id,
+        max_age=auth.SESSION_TTL,
+        httponly=True,
+        secure=True,
+        samesite="Lax",
+        path="/",
+    )
+
+
 async def handle_login_page(request: web.Request) -> web.Response:
     err = unquote(request.query.get("error", "") or "")
     return web.Response(text=_login_html(error=err), content_type="text/html", charset="utf-8")
@@ -116,15 +128,7 @@ async def handle_auth_callback(request: web.Request) -> web.Response:
 
     session_id = auth.create_session(user_id)
     resp = web.HTTPFound("/panel")
-    resp.set_cookie(
-        auth.COOKIE_NAME,
-        session_id,
-        max_age=auth.SESSION_TTL,
-        httponly=True,
-        secure=True,
-        samesite="Lax",
-        path="/",
-    )
+    _set_session_cookie(resp, session_id)
     return resp
 
 
@@ -145,15 +149,7 @@ async def handle_password_login(request: web.Request) -> web.Response:
 
     session_id = auth.create_session(user_id)
     resp = web.HTTPFound("/panel")
-    resp.set_cookie(
-        auth.COOKIE_NAME,
-        session_id,
-        max_age=auth.SESSION_TTL,
-        httponly=True,
-        secure=True,
-        samesite="Lax",
-        path="/",
-    )
+    _set_session_cookie(resp, session_id)
     return resp
 
 
@@ -170,10 +166,116 @@ async def handle_panel_index(request: web.Request) -> web.Response:
     return web.Response(text=index_path.read_text(encoding="utf-8"), content_type="text/html", charset="utf-8")
 
 
+_MINIAPP_HTML = """<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>خوشبخت</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;600;700&display=swap" rel="stylesheet"/>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: #070f1a; color: #e8eef6; font-family: "Vazirmatn", Tahoma, sans-serif;
+    text-align: center; padding: 24px;
+  }
+  .box { max-width: 320px; }
+  .spinner {
+    width: 30px; height: 30px; margin: 0 auto 18px; border-radius: 50%;
+    border: 3px solid rgba(212,175,55,.25); border-top-color: #d4af37;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h2 { font-size: 1.05rem; margin: 0 0 8px; }
+  p { color: #6b8299; font-size: .85rem; line-height: 1.8; margin: 0; }
+  a { color: #d4af37; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <div class="spinner" id="spinner"></div>
+    <h2 id="status-title">در حال ورود...</h2>
+    <p id="status-text">چند لحظه صبر کن</p>
+  </div>
+<script>
+(function () {
+  var tg = window.Telegram && window.Telegram.WebApp;
+  var titleEl = document.getElementById("status-title");
+  var textEl = document.getElementById("status-text");
+  var spinnerEl = document.getElementById("spinner");
+
+  function fail(title, text) {
+    spinnerEl.style.display = "none";
+    titleEl.textContent = title;
+    textEl.innerHTML = text;
+  }
+
+  if (!tg || !tg.initData) {
+    fail("این صفحه فقط داخل تلگرام کار می‌کند", "از دکمه‌ی «باز کردن پنل» داخل ربات وارد شو، یا برای ورود از مرورگر <a href='/panel/login'>اینجا</a> رو بزن.");
+    return;
+  }
+
+  try {
+    tg.ready();
+    tg.expand();
+    tg.setHeaderColor("#070f1a");
+    tg.setBackgroundColor("#070f1a");
+  } catch (e) { /* نسخه‌های قدیمی کلاینت تلگرام ممکنه این متدها رو نداشته باشن */ }
+
+  fetch("/api/auth/webapp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify({ initData: tg.initData }),
+  })
+    .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+    .then(function (res) {
+      if (res.ok) {
+        window.location.replace("/panel");
+      } else {
+        fail("ورود ناموفق بود", (res.data && res.data.error) || "این آیدی تلگرام مجاز نیست.");
+      }
+    })
+    .catch(function () {
+      fail("خطا در اتصال", "به سرور وصل نشد، دوباره امتحان کن.");
+    });
+})();
+</script>
+</body>
+</html>"""
+
+
+async def handle_miniapp_page(request: web.Request) -> web.Response:
+    return web.Response(text=_MINIAPP_HTML, content_type="text/html", charset="utf-8")
+
+
+async def handle_webapp_auth(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "بدنه‌ی درخواست نامعتبره."}, status=400)
+
+    init_data = (body.get("initData") or "").strip()
+    user_id = auth.verify_webapp_init_data(init_data)
+    if user_id is None:
+        return web.json_response({"error": "داده‌ی ورود نامعتبره یا این آیدی تلگرام مجاز نیست."}, status=403)
+
+    session_id = auth.create_session(user_id)
+    resp = web.json_response({"ok": True})
+    _set_session_cookie(resp, session_id)
+    return resp
+
+
 def add_routes(app: web.Application) -> None:
     app.router.add_get("/panel/login", handle_login_page)
     app.router.add_get("/panel/auth/callback", handle_auth_callback)
     app.router.add_post("/panel/auth/password", handle_password_login)
     app.router.add_get("/panel/logout", handle_logout)
     app.router.add_get("/panel", handle_panel_index)
+    app.router.add_get("/panel/miniapp", handle_miniapp_page)
+    app.router.add_post("/api/auth/webapp", handle_webapp_auth)
     app.router.add_static("/panel/static/", path=STATIC_DIR, name="panel_static")

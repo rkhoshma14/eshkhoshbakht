@@ -258,7 +258,7 @@ a:hover { color: #e8c84a; }
 .mobile-bar {
   display: none;
   align-items: center; justify-content: space-between;
-  padding: 14px 16px;
+  padding: calc(14px + env(safe-area-inset-top)) 16px 14px;
   background: var(--bg-elevated);
   border-bottom: 1px solid var(--border);
   position: sticky; top: 0; z-index: 40;

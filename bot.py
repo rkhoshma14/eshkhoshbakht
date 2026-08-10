@@ -22,6 +22,7 @@ from aiogram.types import (
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
+    WebAppInfo,
 )
 
 import storage
@@ -53,6 +54,7 @@ BTN_NOTE_SKIP = "بدون یادداشت"
 BTN_BACK = "« بازگشت به اشتراک‌ها"
 BTN_REFRESH = "🔄 بروزرسانی"
 BTN_PING = "📶 پینگ کانفیگ‌ها"
+BTN_OPEN_PANEL = "🌐 باز کردن پنل"
 BTN_EDIT_NOTE = "📝 یادداشت"
 BTN_DELETE = "🗑 حذف اشتراک"
 BTN_EXPORT = "📤 خروجی اشتراک"
@@ -108,14 +110,14 @@ def is_admin(user_id: int) -> bool:
 
 
 def main_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=BTN_ADD_SUB), KeyboardButton(text=BTN_MULTI_BUILD)],
-            [KeyboardButton(text=BTN_LIST)],
-            [KeyboardButton(text=BTN_MY_GENERATED)],
-        ],
-        resize_keyboard=True,
-    )
+    rows = [
+        [KeyboardButton(text=BTN_ADD_SUB), KeyboardButton(text=BTN_MULTI_BUILD)],
+        [KeyboardButton(text=BTN_LIST)],
+        [KeyboardButton(text=BTN_MY_GENERATED)],
+    ]
+    if BASE_URL:
+        rows.append([KeyboardButton(text=BTN_OPEN_PANEL, web_app=WebAppInfo(url=f"{BASE_URL}/panel/miniapp"))])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
 def _format_updated_at(iso_str: str) -> str:
