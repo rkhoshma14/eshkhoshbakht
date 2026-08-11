@@ -121,7 +121,32 @@ function closeModal() {
 
 // ---------- بارگذاری اولیه ----------
 
+async function authenticateWithTelegram() {
+  try {
+    const res = await fetch("/api/auth/webapp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ initData: TG.initData }),
+    });
+    if (res.ok) return true;
+    const d = await res.json().catch(() => ({}));
+    app.innerHTML = `<div class="empty-state">${icon("empty", "icon-lg")}<div>ورود ناموفق بود: ${esc(d.error || "")}</div></div>`;
+    return false;
+  } catch (e) {
+    app.innerHTML = `<div class="empty-state">${icon("empty", "icon-lg")}<div>خطا در اتصال به سرور</div></div>`;
+    return false;
+  }
+}
+
 async function boot() {
+  // اگه داخل Mini App تلگرام هستیم، اول با initData وارد میشیم — همه‌چیز
+  // توی همین یک بارگذاری صفحه انجام میشه، بدون هیچ ریدایرکت یا ناوبری وسط کار.
+  if (TG) {
+    const ok = await authenticateWithTelegram();
+    if (!ok) return;
+  }
+
   try {
     state.subs = await api("GET", "/api/subs");
   } catch (e) {

@@ -116,7 +116,7 @@ def main_menu() -> ReplyKeyboardMarkup:
         [KeyboardButton(text=BTN_MY_GENERATED)],
     ]
     if BASE_URL:
-        rows.append([KeyboardButton(text=BTN_OPEN_PANEL, web_app=WebAppInfo(url=f"{BASE_URL}/panel/miniapp"))])
+        rows.append([KeyboardButton(text=BTN_OPEN_PANEL, web_app=WebAppInfo(url=f"{BASE_URL}/panel"))])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 

@@ -202,13 +202,15 @@ async def auth_middleware(request: web.Request, handler):
     if path.startswith("/panel/static/") or path in _PUBLIC_PANEL_PATHS:
         return await handler(request)
 
-    if path == "/panel" or path.startswith("/api/"):
+    # صفحه‌ی /panel خودش فقط HTML/JS استاتیکه و داده‌ای نداره، پس عمومیه؛
+    # محافظت واقعی روی /api/*هاست. این باعث میشه Mini App بتونه همه‌چی رو
+    # (چک initData + گرفتن داده‌ها) توی یک بارگذاری صفحه انجام بده، بدون
+    # نیاز به ریدایرکت بین صفحات که وابسته به نگه‌داشتن کوکی توسط WebView بود.
+    if path.startswith("/api/"):
         session_id = request.cookies.get(COOKIE_NAME)
         user_id = get_session_user(session_id)
         if user_id is None:
-            if path.startswith("/api/"):
-                return web.json_response({"error": "لاگین نکردی یا سشنت منقضی شده."}, status=401)
-            raise web.HTTPFound("/panel/login")
+            return web.json_response({"error": "لاگین نکردی یا سشنت منقضی شده."}, status=401)
         request["user_id"] = user_id
 
     return await handler(request)
