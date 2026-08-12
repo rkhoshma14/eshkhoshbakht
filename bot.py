@@ -3,6 +3,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 from html import escape
+from urllib.parse import quote
 
 import httpx
 from aiohttp import web
@@ -680,24 +681,59 @@ def _sub_userinfo(gen: dict) -> str:
     return f"upload=0; download=0; total=0; expire={expire}"
 
 
+def make_expiry_info_config(gen: dict) -> str:
+    """
+    یک کانفیگ فیک می‌سازد که فقط برای نمایش مدت اعتبار باقی‌مانده در لیست کانفیگ‌های کلاینت استفاده می‌شود.
+    هر بار که مشتری ساب را آپدیت کند، این کانفیگ با مقدار به‌روز ساخته می‌شود.
+    """
+    exp = gen.get("expires_at")
+    if not exp:
+        remark = "♾ بدون محدودیت زمانی"
+    else:
+        try:
+            exp_dt = datetime.fromisoformat(exp)
+            now = datetime.now(timezone.utc)
+            if exp_dt <= now:
+                remark = "⛔ اشتراک منقضی شده"
+            else:
+                delta = exp_dt - now
+                days = delta.days
+                hours = delta.seconds // 3600
+                minutes = (delta.seconds % 3600) // 60
+                if days > 0:
+                    remark = f"⏳ باقیمانده: {days} روز و {hours} ساعت"
+                elif hours > 0:
+                    remark = f"⏳ باقیمانده: {hours} ساعت و {minutes} دقیقه"
+                else:
+                    remark = f"⏳ باقیمانده: {minutes} دقیقه"
+        except Exception:
+            remark = "⏰ تاریخ انقضا نامعتبر"
+
+    # کانفیگ فیک (آدرس غیرواقعی تا تداخلی با اتصال واقعی نداشته باشد)
+    return (
+        "vless://00000000-0000-0000-0000-000000000000@127.0.0.1:1"
+        f"?encryption=none&security=none&type=tcp#{quote(remark)}"
+    )
+
+
 async def handle_sub(request: web.Request) -> web.Response:
     token = request.match_info.get("token", "")
     gen = storage.get_generated_by_token(token)
     if not gen:
         return web.Response(text="Subscription not found", status=404, content_type="text/plain")
 
-    if storage.is_generated_expired(gen):
-        if _wants_html(request):
-            return web.Response(
-                text="<h2 style='font-family:tahoma;text-align:center;margin-top:40vh'>این اشتراک منقضی شده است.</h2>",
-                content_type="text/html",
-                charset="utf-8",
-                status=410,
-            )
-        return web.Response(text="Subscription expired", status=410, content_type="text/plain")
+    # کانفیگ فیک نمایش‌دهنده وضعیت اعتبار
+    info_cfg = make_expiry_info_config(gen)
 
-    # لایوآپدیت: اگر recipe (items) ذخیره شده باشد، از منابع فعلی می‌سازد
-    live_configs = storage.resolve_generated_configs(gen, persist=True)
+    if storage.is_generated_expired(gen):
+        # وقتی منقضی شد: فقط کانفیگ فیک «منقضی شده» باقی می‌ماند و بقیه پاک می‌شوند
+        live_configs = [info_cfg]
+    else:
+        # لایوآپدیت: اگر recipe (items) ذخیره شده باشد، از منابع فعلی می‌سازد
+        live_configs = storage.resolve_generated_configs(gen, persist=True)
+        # اضافه کردن کانفیگ فیک در ابتدای لیست
+        live_configs = [info_cfg] + live_configs
+
     body = encode_subscription(live_configs)
 
     sub_headers = {
