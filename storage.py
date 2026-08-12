@@ -264,3 +264,23 @@ def delete_generated_sub(gen_id: int, user_id: int) -> bool:
     deleted = cur.rowcount > 0
     conn.close()
     return deleted
+
+
+def add_configs_to_generated(gen_id: int, user_id: int, new_configs: list[str]) -> int | None:
+    """کانفیگ‌های جدید رو به یک اشتراک سفارشی موجود اضافه می‌کنه. تعداد کل بعد از اضافه‌شدن رو برمی‌گردونه، یا None اگه پیدا نشد."""
+    conn = _conn()
+    row = conn.execute(
+        "SELECT configs FROM generated_subs WHERE id=? AND user_id=?", (gen_id, user_id)
+    ).fetchone()
+    if not row:
+        conn.close()
+        return None
+    existing = json.loads(row[0])
+    existing.extend(new_configs)
+    conn.execute(
+        "UPDATE generated_subs SET configs=? WHERE id=? AND user_id=?",
+        (json.dumps(existing), gen_id, user_id),
+    )
+    conn.commit()
+    conn.close()
+    return len(existing)

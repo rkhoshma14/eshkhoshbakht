@@ -287,6 +287,7 @@ def build_multi_select_keyboard(
 def build_gen_detail_keyboard(gen_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="➕ افزودن کانفیگ از یک اشتراک دیگه", callback_data=f"gen_add:{gen_id}")],
             [InlineKeyboardButton(text="🗑 حذف این اشتراک", callback_data=f"gen_delete:{gen_id}")],
             [InlineKeyboardButton(text="« بازگشت به لیست", callback_data="gens_back")],
         ]
@@ -1158,13 +1159,37 @@ async def start_multi_build(message: Message, state: FSMContext):
     if len(subs) < 1:
         return await message.answer("اول حداقل یک اشتراک اضافه کن.")
     await state.set_state(BuildCustomState.selecting_sources)
-    await state.update_data(selected_sources=set(), multi_pool=[], selected=set())
+    await state.update_data(selected_sources=set(), multi_pool=[], selected=set(), target_gen_id=None)
     await message.answer(
         "🌐 <b>ساخت اشتراک از چند منبع</b>\n\n"
         "اشتراک‌هایی که می‌خوای ازشون کانفیگ بگیری رو تیک بزن:",
         reply_markup=build_sources_keyboard(subs, set()),
         parse_mode="HTML",
     )
+
+
+@dp.callback_query(F.data.regexp(r"^gen_add:\d+$"))
+async def start_add_to_generated(callback: CallbackQuery, state: FSMContext):
+    gen_id = int(callback.data.split(":")[1])
+    g = storage.get_generated_by_id(gen_id, callback.from_user.id)
+    if not g:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+
+    subs = storage.list_subs(callback.from_user.id)
+    if len(subs) < 1:
+        return await callback.answer("اول حداقل یک اشتراک اضافه کن.", show_alert=True)
+
+    await state.set_state(BuildCustomState.selecting_sources)
+    await state.update_data(
+        selected_sources=set(), multi_pool=[], selected=set(), target_gen_id=gen_id
+    )
+    await callback.message.edit_text(
+        f"➕ <b>افزودن کانفیگ به «{escape(g['name'])}»</b>\n\n"
+        "اشتراک‌هایی که می‌خوای ازشون کانفیگ برداری رو تیک بزن:",
+        reply_markup=build_sources_keyboard(subs, set()),
+        parse_mode="HTML",
+    )
+    await callback.answer()
 
 
 @dp.callback_query(F.data == "cancel_multi")
@@ -1327,7 +1352,29 @@ async def msel_done(callback: CallbackQuery, state: FSMContext):
         return await callback.answer("حداقل یک کانفیگ انتخاب کن.", show_alert=True)
 
     queue = sorted(selected)
-    fake_configs = [pool[i]["raw"] for i in queue]
+    picked_raw = [pool[i]["raw"] for i in queue]
+
+    target_gen_id = data.get("target_gen_id")
+    if target_gen_id:
+        g = storage.get_generated_by_id(target_gen_id, callback.from_user.id)
+        await state.clear()
+        if not g:
+            return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+        total = storage.add_configs_to_generated(target_gen_id, callback.from_user.id, picked_raw)
+        g = storage.get_generated_by_id(target_gen_id, callback.from_user.id)
+        await callback.message.edit_text(
+            f"✅ {len(picked_raw)} کانفیگ به «{escape(g['name'])}» اضافه شد.\n"
+            f"📦 مجموع الان: {total} کانفیگ\n\n"
+            "لینک اشتراک همون قبلیه، عوض نشده.",
+            parse_mode="HTML",
+        )
+        await callback.message.answer(
+            gen_detail_text(g), reply_markup=build_gen_detail_keyboard(target_gen_id), parse_mode="HTML"
+        )
+        await callback.answer("اضافه شد ✅")
+        return
+
+    fake_configs = picked_raw
     await state.update_data(
         rename_queue=list(range(len(fake_configs))),
         renamed_configs=[],
