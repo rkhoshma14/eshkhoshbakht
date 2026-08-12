@@ -16,6 +16,7 @@ from config_parser import (
     encode_subscription,
     get_protocol,
     get_remark,
+    remaining_time_text,
     rename_config,
 )
 from pinger import ping_configs
@@ -72,6 +73,7 @@ def _gen_summary(gen: dict, request: web.Request) -> dict:
         "created_at": gen.get("created_at", ""),
         "expires_at": gen.get("expires_at"),
         "expired": storage.is_generated_expired(gen),
+        "remaining_text": remaining_time_text(gen.get("expires_at")),
         "url": _make_url(gen["token"], request),
         "live": bool(gen.get("items")),
     }

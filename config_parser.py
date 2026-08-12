@@ -121,3 +121,41 @@ def config_fingerprint(raw: str) -> str:
         return f"{proto}|{host_port}|{base[-48:]}"
     except Exception:
         return f"{proto}|{raw[:64]}"
+
+
+# ---------- کانفیگ فیک نمایش‌دهنده مدت اعتبار ----------
+
+def remaining_time_text(expires_at: str | None) -> str:
+    """متن فارسی مدت اعتبار باقی‌مانده (یا وضعیت منقضی / بدون محدودیت)."""
+    from datetime import datetime, timezone
+
+    if not expires_at:
+        return "♾ بدون محدودیت زمانی"
+    try:
+        exp_dt = datetime.fromisoformat(expires_at)
+        now = datetime.now(timezone.utc)
+        if exp_dt <= now:
+            return "⛔ اشتراک منقضی شده"
+        delta = exp_dt - now
+        days = delta.days
+        hours = delta.seconds // 3600
+        minutes = (delta.seconds % 3600) // 60
+        if days > 0:
+            return f"⏳ باقیمانده: {days} روز و {hours} ساعت"
+        if hours > 0:
+            return f"⏳ باقیمانده: {hours} ساعت و {minutes} دقیقه"
+        return f"⏳ باقیمانده: {minutes} دقیقه"
+    except Exception:
+        return "⏰ تاریخ انقضا نامعتبر"
+
+
+def make_expiry_info_config(expires_at: str | None) -> str:
+    """
+    کانفیگ فیک برای نمایش مدت اعتبار در لیست کانفیگ‌های کلاینت.
+    هر بار که مشتری ساب را آپدیت کند، با مقدار به‌روز ساخته می‌شود.
+    """
+    remark = remaining_time_text(expires_at)
+    return (
+        "vless://00000000-0000-0000-0000-000000000000@127.0.0.1:1"
+        f"?encryption=none&security=none&type=tcp#{quote(remark)}"
+    )

@@ -807,7 +807,7 @@ function renderGeneratedList() {
     <div class="list-item" data-open-gen="${g.id}">
       <div>
         <div class="title">${esc(g.name)} ${g.expired ? '<span class="badge badge-expired">منقضی</span>' : ""} ${g.live ? '<span class="badge badge-ms">لایو</span>' : ""}</div>
-        <div class="subtitle">${g.config_count} کانفیگ · ${fmtDate(g.created_at)}</div>
+        <div class="subtitle">${g.config_count} کانفیگ · ${fmtDate(g.created_at)}${g.remaining_text ? ` · ${esc(g.remaining_text)}` : ""}</div>
       </div>
       <span class="chevron">${icon("chevron")}</span>
     </div>
@@ -870,6 +870,7 @@ function renderGenDetail(gen) {
     ? (gen.expired ? `منقضی‌شده (${fmtDate(gen.expires_at)})` : fmtDate(gen.expires_at))
     : "بدون محدودیت";
   const liveLabel = gen.live ? " · همگام با منبع" : " · ثابت";
+  const remainingLabel = gen.remaining_text ? gen.remaining_text : "";
 
   return `
     <button class="back-link" id="back-to-gens">${icon("back", "icon-sm")} بازگشت</button>
@@ -878,6 +879,7 @@ function renderGenDetail(gen) {
         <div>
           <div class="detail-title">${esc(gen.name)}</div>
           <div class="detail-meta">${gen.config_count} کانفیگ · ${fmtDate(gen.created_at)} · انقضا: ${expLabel}${liveLabel}</div>
+          ${remainingLabel ? `<div class="detail-meta" style="margin-top:6px;font-weight:600;color:var(--accent)">${esc(remainingLabel)}</div>` : ""}
         </div>
         <button class="btn-sm btn btn-danger" id="delete-gen-btn">${icon("trash", "icon-sm")} حذف</button>
       </div>

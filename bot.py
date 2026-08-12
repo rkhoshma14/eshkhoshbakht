@@ -3,7 +3,6 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 from html import escape
-from urllib.parse import quote
 
 import httpx
 from aiohttp import web
@@ -33,6 +32,8 @@ from config_parser import (
     encode_subscription,
     get_protocol,
     get_remark,
+    make_expiry_info_config,
+    remaining_time_text,
     rename_config,
 )
 from pinger import ping_configs
@@ -178,6 +179,7 @@ def gen_detail_text(g: dict) -> str:
     url = make_public_url(g["token"]) if BASE_URL else f"/sub/{g['token']}"
     created = _format_updated_at(g.get("created_at", ""))
     exp = g.get("expires_at")
+    remaining = remaining_time_text(exp)
     if exp:
         if storage.is_generated_expired(g):
             exp_line = f"⏰ انقضا: <b>منقضی شده</b> ({_format_updated_at(exp)})\n"
@@ -185,12 +187,14 @@ def gen_detail_text(g: dict) -> str:
             exp_line = f"⏰ انقضا: {_format_updated_at(exp)}\n"
     else:
         exp_line = "⏰ انقضا: بدون محدودیت\n"
+    live_line = "🔄 همگام با منبع\n" if g.get("items") else "📌 ثابت (snapshot)\n"
     text = (
         f"🛠 <b>{escape(g['name'])}</b>\n"
         f"📦 {len(g['configs'])} کانفیگ\n"
         f"🕒 ساخته‌شده: {created}\n"
-        f"{exp_line}\n"
-        f"{live_line}"
+        f"{exp_line}"
+        f"📊 {escape(remaining)}\n"
+        f"{live_line}\n"
         f"🔗 لینک اشتراک:\n<code>{url}</code>"
     )
     return text
@@ -681,49 +685,14 @@ def _sub_userinfo(gen: dict) -> str:
     return f"upload=0; download=0; total=0; expire={expire}"
 
 
-def make_expiry_info_config(gen: dict) -> str:
-    """
-    یک کانفیگ فیک می‌سازد که فقط برای نمایش مدت اعتبار باقی‌مانده در لیست کانفیگ‌های کلاینت استفاده می‌شود.
-    هر بار که مشتری ساب را آپدیت کند، این کانفیگ با مقدار به‌روز ساخته می‌شود.
-    """
-    exp = gen.get("expires_at")
-    if not exp:
-        remark = "♾ بدون محدودیت زمانی"
-    else:
-        try:
-            exp_dt = datetime.fromisoformat(exp)
-            now = datetime.now(timezone.utc)
-            if exp_dt <= now:
-                remark = "⛔ اشتراک منقضی شده"
-            else:
-                delta = exp_dt - now
-                days = delta.days
-                hours = delta.seconds // 3600
-                minutes = (delta.seconds % 3600) // 60
-                if days > 0:
-                    remark = f"⏳ باقیمانده: {days} روز و {hours} ساعت"
-                elif hours > 0:
-                    remark = f"⏳ باقیمانده: {hours} ساعت و {minutes} دقیقه"
-                else:
-                    remark = f"⏳ باقیمانده: {minutes} دقیقه"
-        except Exception:
-            remark = "⏰ تاریخ انقضا نامعتبر"
-
-    # کانفیگ فیک (آدرس غیرواقعی تا تداخلی با اتصال واقعی نداشته باشد)
-    return (
-        "vless://00000000-0000-0000-0000-000000000000@127.0.0.1:1"
-        f"?encryption=none&security=none&type=tcp#{quote(remark)}"
-    )
-
-
 async def handle_sub(request: web.Request) -> web.Response:
     token = request.match_info.get("token", "")
     gen = storage.get_generated_by_token(token)
     if not gen:
         return web.Response(text="Subscription not found", status=404, content_type="text/plain")
 
-    # کانفیگ فیک نمایش‌دهنده وضعیت اعتبار
-    info_cfg = make_expiry_info_config(gen)
+    # کانفیگ فیک نمایش‌دهنده وضعیت اعتبار (مشترک با config_parser)
+    info_cfg = make_expiry_info_config(gen.get("expires_at"))
 
     if storage.is_generated_expired(gen):
         # وقتی منقضی شد: فقط کانفیگ فیک «منقضی شده» باقی می‌ماند و بقیه پاک می‌شوند
