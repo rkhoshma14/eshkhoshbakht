@@ -318,6 +318,63 @@ async def api_get_generated(request: web.Request) -> web.Response:
     return web.json_response(data)
 
 
+
+async def api_add_to_generated(request: web.Request) -> web.Response:
+    """افزودن کانفیگ از اشتراک‌های اصلی به یک اشتراک سفارشی موجود.
+    body: { "items": [ {"sub_id": 1, "index": 0, "name": "اختیاری"}, ... ] }
+    لینک ساب عوض نمی‌شود.
+    """
+    gen_id = int(request.match_info["gen_id"])
+    user_id = request["user_id"]
+    gen = storage.get_generated_by_id(gen_id, user_id)
+    if not gen:
+        return _err("پیدا نشد.", 404)
+
+    body = await _json_body(request)
+    if body is None:
+        return _err("بدنه‌ی درخواست نامعتبره.")
+
+    items = body.get("items") or []
+    if not isinstance(items, list) or not items:
+        return _err("حداقل یک کانفیگ انتخاب کن.")
+
+    subs_cache: dict[int, dict] = {}
+    final_configs = []
+
+    for item in items:
+        try:
+            sub_id = int(item["sub_id"])
+            idx = int(item["index"])
+        except (KeyError, TypeError, ValueError):
+            return _err("آیتم انتخابی نامعتبره.")
+
+        sub = subs_cache.get(sub_id)
+        if sub is None:
+            sub = storage.get_sub(sub_id, user_id)
+            if not sub:
+                return _err(f"اشتراک با id={sub_id} پیدا نشد.", 404)
+            subs_cache[sub_id] = sub
+
+        if idx < 0 or idx >= len(sub["configs"]):
+            return _err("ایندکس کانفیگ نامعتبره.")
+
+        raw = sub["configs"][idx]
+        custom_name = (item.get("name") or "").strip()
+        if custom_name:
+            raw = rename_config(raw, custom_name)
+        final_configs.append(raw)
+
+    total = storage.add_configs_to_generated(gen_id, user_id, final_configs)
+    if total is None:
+        return _err("پیدا نشد.", 404)
+
+    gen = storage.get_generated_by_id(gen_id, user_id)
+    data = _gen_summary(gen, request)
+    data["added"] = len(final_configs)
+    data["config_count"] = total
+    return web.json_response(data)
+
+
 async def api_delete_generated(request: web.Request) -> web.Response:
     gen_id = int(request.match_info["gen_id"])
     if not storage.get_generated_by_id(gen_id, request["user_id"]):
@@ -340,4 +397,5 @@ def add_routes(app: web.Application) -> None:
     app.router.add_post("/api/build-custom", api_build_custom)
     app.router.add_get("/api/generated", api_list_generated)
     app.router.add_get("/api/generated/{gen_id}", api_get_generated)
+    app.router.add_post("/api/generated/{gen_id}/add-configs", api_add_to_generated)
     app.router.add_delete("/api/generated/{gen_id}", api_delete_generated)

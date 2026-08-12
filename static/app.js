@@ -16,6 +16,9 @@ const state = {
   generated: [],
   currentGen: null,
   cart: [],
+  // وقتی می‌خوایم به یک ساب سفارشی موجود کانفیگ اضافه کنیم
+  targetGenId: null,
+  targetGenName: "",
 };
 
 const app = document.getElementById("app");
@@ -333,9 +336,21 @@ function renderSubsList() {
     });
     const addBtn = document.getElementById("add-sub-btn");
     if (addBtn) addBtn.addEventListener("click", openAddSubModal);
+    const cancelAdd = document.getElementById("cancel-add-mode");
+    if (cancelAdd) cancelAdd.addEventListener("click", cancelAddToGenerated);
   });
 
   return `
+    ${state.targetGenId ? `
+    <div class="card" style="border-color:var(--gold);background:var(--gold-dim)">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div>
+          <div class="title" style="color:var(--gold);font-weight:700">افزودن کانفیگ به «${esc(state.targetGenName)}»</div>
+          <div class="subtitle" style="margin-top:4px">یک اشتراک را باز کن، کانفیگ‌ها را تیک بزن، بعد از نوار پایین «افزودن» را بزن. لینک ساب عوض نمی‌شود.</div>
+        </div>
+        <button class="btn-sm btn" id="cancel-add-mode">انصراف</button>
+      </div>
+    </div>` : ""}
     <div class="page-header">
       <div>
         <h2>${icon("subs")} اشتراک‌ها</h2>
@@ -663,11 +678,14 @@ function toggleCart(sub, idx, checked) {
 
 function renderCartBar() {
   if (!state.cart.length) return `<div class="cart-bar" id="cart-bar"></div>`;
+  const actionBtn = state.targetGenId
+    ? `<button class="btn" id="cart-add-to-gen">${icon("plus", "icon-sm")} افزودن به «${esc(state.targetGenName)}»</button>`
+    : `<button class="btn" id="cart-build">${icon("custom", "icon-sm")} ساخت اشتراک سفارشی</button>`;
   return `
     <div class="cart-bar show" id="cart-bar">
       <span class="count">${state.cart.length} کانفیگ انتخاب‌شده</span>
       <button class="btn-sm btn" id="cart-clear">پاک کردن</button>
-      <button class="btn" id="cart-build">${icon("custom", "icon-sm")} ساخت اشتراک سفارشی</button>
+      ${actionBtn}
     </div>
   `;
 }
@@ -677,6 +695,50 @@ function bindCartBarEvents() {
   if (clear) clear.addEventListener("click", () => { state.cart = []; render(); });
   const build = document.getElementById("cart-build");
   if (build) build.addEventListener("click", openBuildCustomModal);
+  const addTo = document.getElementById("cart-add-to-gen");
+  if (addTo) addTo.addEventListener("click", submitAddToGenerated);
+}
+
+async function submitAddToGenerated() {
+  if (!state.targetGenId || !state.cart.length) return;
+  const items = state.cart.map((it) => ({
+    sub_id: it.sub_id,
+    index: it.index,
+    name: it.name || undefined,
+  }));
+  try {
+    const result = await api("POST", `/api/generated/${state.targetGenId}/add-configs`, { items });
+    const added = result.added || state.cart.length;
+    const genId = state.targetGenId;
+    state.cart = [];
+    state.targetGenId = null;
+    state.targetGenName = "";
+    toast(`${added} کانفیگ اضافه شد`);
+    state.currentGen = await api("GET", `/api/generated/${genId}`);
+    state.tab = "generated";
+    state.view = "gen-detail";
+    render();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function startAddToGenerated(gen) {
+  state.targetGenId = gen.id;
+  state.targetGenName = gen.name;
+  state.cart = [];
+  state.currentGen = null;
+  state.tab = "subs";
+  state.view = "list";
+  toast(`کانفیگ‌ها را از اشتراک‌ها تیک بزن — بعد «افزودن به ${gen.name}»`);
+  render();
+}
+
+function cancelAddToGenerated() {
+  state.targetGenId = null;
+  state.targetGenName = "";
+  state.cart = [];
+  render();
 }
 
 function openBuildCustomModal() {
@@ -790,6 +852,8 @@ function renderGenDetail(gen) {
     });
     document.getElementById("copy-gen-url").addEventListener("click", () => copyText(gen.url));
     document.getElementById("delete-gen-btn").addEventListener("click", () => confirmDeleteGen(gen));
+    const addBtn = document.getElementById("add-to-gen-btn");
+    if (addBtn) addBtn.addEventListener("click", () => startAddToGenerated(gen));
   }, 0);
 
   const expLabel = gen.expires_at
@@ -810,6 +874,7 @@ function renderGenDetail(gen) {
       <code class="url">${esc(gen.url)}</code>
       <div class="action-bar">
         <button class="btn-sm btn" id="copy-gen-url">${icon("copy", "icon-sm")} کپی لینک</button>
+        <button class="btn-sm btn" id="add-to-gen-btn">${icon("plus", "icon-sm")} افزودن کانفیگ</button>
       </div>
     </div>
     <div class="card">${rows || '<div class="empty-state">کانفیگی نیست.</div>'}</div>
