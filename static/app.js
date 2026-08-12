@@ -806,7 +806,7 @@ function renderGeneratedList() {
   const items = state.generated.map((g) => `
     <div class="list-item" data-open-gen="${g.id}">
       <div>
-        <div class="title">${esc(g.name)} ${g.expired ? '<span class="badge badge-expired">منقضی</span>' : ""}</div>
+        <div class="title">${esc(g.name)} ${g.expired ? '<span class="badge badge-expired">منقضی</span>' : ""} ${g.live ? '<span class="badge badge-ms">لایو</span>' : ""}</div>
         <div class="subtitle">${g.config_count} کانفیگ · ${fmtDate(g.created_at)}</div>
       </div>
       <span class="chevron">${icon("chevron")}</span>
@@ -859,6 +859,7 @@ function renderGenDetail(gen) {
   const expLabel = gen.expires_at
     ? (gen.expired ? `منقضی‌شده (${fmtDate(gen.expires_at)})` : fmtDate(gen.expires_at))
     : "بدون محدودیت";
+  const liveLabel = gen.live ? " · همگام با منبع" : " · ثابت";
 
   return `
     <button class="back-link" id="back-to-gens">${icon("back", "icon-sm")} بازگشت</button>
@@ -866,7 +867,7 @@ function renderGenDetail(gen) {
       <div class="card-header">
         <div>
           <div class="detail-title">${esc(gen.name)}</div>
-          <div class="detail-meta">${gen.config_count} کانفیگ · ${fmtDate(gen.created_at)} · انقضا: ${expLabel}</div>
+          <div class="detail-meta">${gen.config_count} کانفیگ · ${fmtDate(gen.created_at)} · انقضا: ${expLabel}${liveLabel}</div>
         </div>
         <button class="btn-sm btn btn-danger" id="delete-gen-btn">${icon("trash", "icon-sm")} حذف</button>
       </div>

@@ -102,3 +102,22 @@ def rename_config(raw: str, new_name: str) -> str:
     else:
         base = raw.split("#", 1)[0]
         return f"{base}#{quote(new_name)}"
+
+
+def config_fingerprint(raw: str) -> str:
+    """شناسه پایدار کانفیگ (بدون remark) برای همگام‌سازی بعد از بروزرسانی منبع."""
+    proto = get_protocol(raw)
+    hp = get_host_port(raw)
+    host_port = f"{hp[0]}:{hp[1]}" if hp else ""
+    if raw.startswith("vmess://"):
+        try:
+            data = json.loads(_b64decode(raw[len("vmess://"):]))
+            uid = data.get("id") or ""
+            return f"vmess|{host_port}|{uid}"
+        except Exception:
+            pass
+    try:
+        base = raw.split("#", 1)[0]
+        return f"{proto}|{host_port}|{base[-48:]}"
+    except Exception:
+        return f"{proto}|{raw[:64]}"

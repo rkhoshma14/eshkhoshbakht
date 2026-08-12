@@ -56,6 +56,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     gen_cols = {row[1] for row in conn.execute("PRAGMA table_info(generated_subs)").fetchall()}
     if gen_cols and "expires_at" not in gen_cols:
         conn.execute("ALTER TABLE generated_subs ADD COLUMN expires_at TEXT")
+    gen_cols = {row[1] for row in conn.execute("PRAGMA table_info(generated_subs)").fetchall()}
+    if gen_cols and "items" not in gen_cols:
+        conn.execute("ALTER TABLE generated_subs ADD COLUMN items TEXT")
         conn.commit()
 
 
@@ -80,7 +83,8 @@ def _conn():
             token TEXT NOT NULL UNIQUE,
             configs TEXT NOT NULL,
             created_at TEXT NOT NULL,
-            expires_at TEXT
+            expires_at TEXT,
+            items TEXT
         )"""
     )
     _migrate(conn)
@@ -171,15 +175,28 @@ def delete_sub(sub_id: int, user_id: int) -> None:
 
 # ---------- اشتراک‌های سفارشی ساخته‌شده ----------
 
+
 def create_generated_sub(
-    user_id: int, name: str, configs: list[str], expires_at: str | None = None
+    user_id: int,
+    name: str,
+    configs: list[str],
+    expires_at: str | None = None,
+    items: list[dict] | None = None,
 ) -> tuple[int, str]:
-    """یک اشتراک سفارشی جدید می‌سازه و (id, token) برمی‌گردونه."""
-    token = secrets.token_urlsafe(12)
+    """items: لیست منبع برای لایوآپدیت — [{"sub_id", "index", "name", "fp"}, ...]"""
+    token = secrets.token_urlsafe(16)
     conn = _conn()
     cur = conn.execute(
-        "INSERT INTO generated_subs (user_id, name, token, configs, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (user_id, name, token, json.dumps(configs), _now_iso(), expires_at),
+        "INSERT INTO generated_subs (user_id, name, token, configs, created_at, expires_at, items) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            user_id,
+            name,
+            token,
+            json.dumps(configs),
+            _now_iso(),
+            expires_at,
+            json.dumps(items) if items is not None else None,
+        ),
     )
     conn.commit()
     gen_id = cur.lastrowid
@@ -188,7 +205,18 @@ def create_generated_sub(
 
 
 def _row_to_generated(row) -> dict:
-    gid, user_id, name, tok, configs_json, created_at, expires_at = row
+    # پشتیبانی از هر دو شکل (با/بدون items)
+    if len(row) >= 8:
+        gid, user_id, name, tok, configs_json, created_at, expires_at, items_json = row[:8]
+    else:
+        gid, user_id, name, tok, configs_json, created_at, expires_at = row[:7]
+        items_json = None
+    items = None
+    if items_json:
+        try:
+            items = json.loads(items_json)
+        except Exception:
+            items = None
     return {
         "id": gid,
         "user_id": user_id,
@@ -197,13 +225,14 @@ def _row_to_generated(row) -> dict:
         "configs": json.loads(configs_json),
         "created_at": created_at,
         "expires_at": expires_at,
+        "items": items,
     }
 
 
 def get_generated_by_token(token: str) -> dict | None:
     conn = _conn()
     row = conn.execute(
-        "SELECT id, user_id, name, token, configs, created_at, expires_at FROM generated_subs WHERE token=?",
+        "SELECT id, user_id, name, token, configs, created_at, expires_at, items FROM generated_subs WHERE token=?",
         (token,),
     ).fetchone()
     conn.close()
@@ -215,7 +244,7 @@ def get_generated_by_token(token: str) -> dict | None:
 def get_generated_by_id(gen_id: int, user_id: int) -> dict | None:
     conn = _conn()
     row = conn.execute(
-        "SELECT id, user_id, name, token, configs, created_at, expires_at FROM generated_subs WHERE id=? AND user_id=?",
+        "SELECT id, user_id, name, token, configs, created_at, expires_at, items FROM generated_subs WHERE id=? AND user_id=?",
         (gen_id, user_id),
     ).fetchone()
     conn.close()
@@ -227,13 +256,25 @@ def get_generated_by_id(gen_id: int, user_id: int) -> dict | None:
 def list_generated_subs(user_id: int) -> list[dict]:
     conn = _conn()
     rows = conn.execute(
-        "SELECT id, name, token, configs, created_at, expires_at FROM generated_subs WHERE user_id=? ORDER BY id DESC",
+        "SELECT id, name, token, configs, created_at, expires_at, items FROM generated_subs WHERE user_id=? ORDER BY id DESC",
         (user_id,),
     ).fetchall()
     conn.close()
     result = []
-    for gid, name, token, configs_json, created_at, expires_at in rows:
+    for row in rows:
+        if len(row) >= 7:
+            gid, name, token, configs_json, created_at, expires_at = row[:6]
+            items_json = row[6] if len(row) > 6 else None
+        else:
+            gid, name, token, configs_json, created_at, expires_at = row[:6]
+            items_json = None
         configs = json.loads(configs_json)
+        items = None
+        if items_json:
+            try:
+                items = json.loads(items_json)
+            except Exception:
+                items = None
         result.append(
             {
                 "id": gid,
@@ -242,6 +283,7 @@ def list_generated_subs(user_id: int) -> list[dict]:
                 "config_count": len(configs),
                 "created_at": created_at,
                 "expires_at": expires_at,
+                "items": items,
             }
         )
     return result
@@ -266,21 +308,126 @@ def delete_generated_sub(gen_id: int, user_id: int) -> bool:
     return deleted
 
 
-def add_configs_to_generated(gen_id: int, user_id: int, new_configs: list[str]) -> int | None:
-    """کانفیگ‌های جدید رو به یک اشتراک سفارشی موجود اضافه می‌کنه. تعداد کل بعد از اضافه‌شدن رو برمی‌گردونه، یا None اگه پیدا نشد."""
+def update_generated_expiry(gen_id: int, user_id: int, expires_at: str | None) -> bool:
+    conn = _conn()
+    cur = conn.execute(
+        "UPDATE generated_subs SET expires_at=? WHERE id=? AND user_id=?",
+        (expires_at, gen_id, user_id),
+    )
+    conn.commit()
+    ok = cur.rowcount > 0
+    conn.close()
+    return ok
+
+
+def add_configs_to_generated(
+    gen_id: int,
+    user_id: int,
+    new_configs: list[str],
+    new_items: list[dict] | None = None,
+) -> int | None:
+    """کانفیگ‌های جدید (+ آیتم‌های منبع) را به اشتراک سفارشی اضافه می‌کند."""
     conn = _conn()
     row = conn.execute(
-        "SELECT configs FROM generated_subs WHERE id=? AND user_id=?", (gen_id, user_id)
+        "SELECT configs, items FROM generated_subs WHERE id=? AND user_id=?",
+        (gen_id, user_id),
     ).fetchone()
     if not row:
         conn.close()
         return None
     existing = json.loads(row[0])
     existing.extend(new_configs)
+    items = None
+    if row[1]:
+        try:
+            items = json.loads(row[1])
+        except Exception:
+            items = []
+    if new_items:
+        if items is None:
+            items = []
+        items.extend(new_items)
     conn.execute(
-        "UPDATE generated_subs SET configs=? WHERE id=? AND user_id=?",
-        (json.dumps(existing), gen_id, user_id),
+        "UPDATE generated_subs SET configs=?, items=? WHERE id=? AND user_id=?",
+        (json.dumps(existing), json.dumps(items) if items is not None else None, gen_id, user_id),
     )
     conn.commit()
     conn.close()
     return len(existing)
+
+
+def _resolve_one_item(item: dict, user_id: int, subs_cache: dict) -> str | None:
+    """یک آیتم منبع را به کانفیگ خام فعلی تبدیل می‌کند."""
+    from config_parser import config_fingerprint, rename_config
+
+    try:
+        sub_id = int(item["sub_id"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    sub = subs_cache.get(sub_id)
+    if sub is None:
+        sub = get_sub(sub_id, user_id)
+        if not sub:
+            return None
+        subs_cache[sub_id] = sub
+
+    configs = sub.get("configs") or []
+    fp = item.get("fp") or ""
+    idx = item.get("index")
+    raw = None
+
+    if isinstance(idx, int) and 0 <= idx < len(configs):
+        cand = configs[idx]
+        if not fp or config_fingerprint(cand) == fp:
+            raw = cand
+
+    if raw is None and fp:
+        for cand in configs:
+            if config_fingerprint(cand) == fp:
+                raw = cand
+                break
+
+    if raw is None:
+        return None
+
+    custom_name = (item.get("name") or "").strip()
+    if custom_name:
+        raw = rename_config(raw, custom_name)
+    return raw
+
+
+def resolve_generated_configs(gen: dict, persist: bool = True) -> list[str]:
+    """کانفیگ‌های لایو اشتراک سفارشی را از روی منابع می‌سازد.
+    اگر items نباشد، همان snapshot ذخیره‌شده برمی‌گردد.
+    """
+    items = gen.get("items")
+    snapshot = list(gen.get("configs") or [])
+    if not items:
+        return snapshot
+
+    user_id = gen.get("user_id")
+    if user_id is None:
+        return snapshot
+
+    subs_cache: dict = {}
+    resolved: list[str] = []
+    for i, item in enumerate(items):
+        raw = _resolve_one_item(item, user_id, subs_cache)
+        if raw is not None:
+            resolved.append(raw)
+        elif i < len(snapshot):
+            # منبع در دسترس نیست — آخرین نسخه ذخیره‌شده
+            resolved.append(snapshot[i])
+
+    if persist and resolved and gen.get("id") is not None:
+        conn = _conn()
+        conn.execute(
+            "UPDATE generated_subs SET configs=? WHERE id=?",
+            (json.dumps(resolved), gen["id"]),
+        )
+        conn.commit()
+        conn.close()
+        gen["configs"] = resolved
+
+    return resolved

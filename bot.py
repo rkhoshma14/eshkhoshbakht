@@ -27,6 +27,7 @@ from aiogram.types import (
 
 import storage
 from config_parser import (
+    config_fingerprint,
     decode_subscription,
     encode_subscription,
     get_protocol,
@@ -184,6 +185,7 @@ def gen_detail_text(g: dict) -> str:
         f"📦 {len(g['configs'])} کانفیگ\n"
         f"🕒 ساخته‌شده: {created}\n"
         f"{exp_line}\n"
+        f"{live_line}"
         f"🔗 لینک اشتراک:\n<code>{url}</code>"
     )
     return text
@@ -659,17 +661,24 @@ async def handle_sub(request: web.Request) -> web.Response:
             )
         return web.Response(text="Subscription expired", status=410, content_type="text/plain")
 
-    body = encode_subscription(gen["configs"])
+    # لایوآپدیت: اگر recipe (items) ذخیره شده باشد، از منابع فعلی می‌سازد
+    live_configs = storage.resolve_generated_configs(gen, persist=True)
+    body = encode_subscription(live_configs)
+
+    sub_headers = {
+        "profile-title": gen["name"],
+        "subscription-userinfo": _sub_userinfo(gen),
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "profile-update-interval": "1",
+    }
 
     if not _wants_html(request):
         return web.Response(
             text=body,
             content_type="text/plain",
             charset="utf-8",
-            headers={
-                "profile-title": gen["name"],
-                "subscription-userinfo": _sub_userinfo(gen),
-            },
+            headers=sub_headers,
         )
 
     host = request.headers.get("Host", "")
@@ -678,8 +687,12 @@ async def handle_sub(request: web.Request) -> web.Response:
     else:
         public_url = make_public_url(token, request_host=host)
 
+    gen = dict(gen)
+    gen["configs"] = live_configs
     html = _build_panel_html(gen, public_url)
-    return web.Response(text=html, content_type="text/html", charset="utf-8")
+    return web.Response(text=html, content_type="text/html", charset="utf-8", headers={
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+    })
 
 
 async def handle_health(request: web.Request) -> web.Response:
@@ -966,7 +979,21 @@ async def select_done(callback: CallbackQuery, state: FSMContext):
         return await callback.answer("اشتراک پیدا نشد.", show_alert=True)
 
     queue = sorted(selected)
-    await state.update_data(rename_queue=queue, renamed_configs=[], current_rename_idx=0)
+    source_items = []
+    for idx in queue:
+        raw = sub["configs"][idx]
+        source_items.append({
+            "sub_id": sub_id,
+            "index": idx,
+            "fp": config_fingerprint(raw),
+            "name": "",
+        })
+    await state.update_data(
+        rename_queue=queue,
+        renamed_configs=[],
+        current_rename_idx=0,
+        source_items=source_items,
+    )
     await state.set_state(BuildCustomState.renaming)
 
     first_idx = queue[0]
@@ -1018,6 +1045,10 @@ async def receive_rename(message: Message, state: FSMContext):
     raw = sub["configs"][idx]
     new_name = message.text.strip()
     renamed.append(rename_config(raw, new_name))
+    source_items = list(data.get("source_items") or [])
+    if current < len(source_items):
+        source_items[current]["name"] = new_name
+        await state.update_data(source_items=source_items)
 
     await _advance_rename(message, state, sub, queue, current, renamed)
 
@@ -1125,8 +1156,9 @@ async def finish_custom_with_expiry(callback: CallbackQuery, state: FSMContext):
     if days > 0:
         expires_at = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
 
+    source_items = data.get("source_items")
     gen_id, token = storage.create_generated_sub(
-        callback.from_user.id, name, renamed, expires_at=expires_at
+        callback.from_user.id, name, renamed, expires_at=expires_at, items=source_items
     )
     await state.clear()
 
@@ -1149,7 +1181,10 @@ async def finish_custom_with_expiry(callback: CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(msg, parse_mode="HTML")
     await callback.message.answer("منوی اصلی:", reply_markup=main_menu())
-    await callback.answer("ساخته شد ✅")# ---------- ساخت از چند منبع ----------
+    await callback.answer("ساخته شد ✅")
+
+
+# ---------- ساخت از چند منبع ----------
 
 @dp.message(F.text == BTN_MULTI_BUILD)
 async def start_multi_build(message: Message, state: FSMContext):
@@ -1360,7 +1395,18 @@ async def msel_done(callback: CallbackQuery, state: FSMContext):
         await state.clear()
         if not g:
             return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
-        total = storage.add_configs_to_generated(target_gen_id, callback.from_user.id, picked_raw)
+        new_items = []
+        for i in queue:
+            it = pool[i]
+            new_items.append({
+                "sub_id": it["sub_id"],
+                "index": it.get("index", 0),
+                "fp": config_fingerprint(it["raw"]),
+                "name": "",
+            })
+        total = storage.add_configs_to_generated(
+            target_gen_id, callback.from_user.id, picked_raw, new_items=new_items
+        )
         g = storage.get_generated_by_id(target_gen_id, callback.from_user.id)
         await callback.message.edit_text(
             f"✅ {len(picked_raw)} کانفیگ به «{escape(g['name'])}» اضافه شد.\n"
@@ -1375,12 +1421,22 @@ async def msel_done(callback: CallbackQuery, state: FSMContext):
         return
 
     fake_configs = picked_raw
+    source_items = []
+    for i in queue:
+        it = pool[i]
+        source_items.append({
+            "sub_id": it["sub_id"],
+            "index": it.get("index", 0),
+            "fp": config_fingerprint(it["raw"]),
+            "name": "",
+        })
     await state.update_data(
         rename_queue=list(range(len(fake_configs))),
         renamed_configs=[],
         current_rename_idx=0,
         multi_fake_configs=fake_configs,
         sub_id=-1,
+        source_items=source_items,
     )
     await state.set_state(BuildCustomState.renaming)
 

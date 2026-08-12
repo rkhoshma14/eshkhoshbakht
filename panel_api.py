@@ -11,6 +11,7 @@ from aiohttp import web
 
 import storage
 from config_parser import (
+    config_fingerprint,
     decode_subscription,
     encode_subscription,
     get_protocol,
@@ -72,6 +73,7 @@ def _gen_summary(gen: dict, request: web.Request) -> dict:
         "expires_at": gen.get("expires_at"),
         "expired": storage.is_generated_expired(gen),
         "url": _make_url(gen["token"], request),
+        "live": bool(gen.get("items")),
     }
 
 
@@ -269,6 +271,7 @@ async def api_build_custom(request: web.Request) -> web.Response:
     subs_cache: dict[int, dict] = {}
     final_configs = []
 
+    recipe = []
     for item in items:
         try:
             sub_id = int(item["sub_id"])
@@ -286,17 +289,24 @@ async def api_build_custom(request: web.Request) -> web.Response:
         if idx < 0 or idx >= len(sub["configs"]):
             return _err("ایندکس کانفیگ نامعتبره.")
 
-        raw = sub["configs"][idx]
+        src_raw = sub["configs"][idx]
         custom_name = (item.get("name") or "").strip()
-        if custom_name:
-            raw = rename_config(raw, custom_name)
+        raw = rename_config(src_raw, custom_name) if custom_name else src_raw
         final_configs.append(raw)
+        recipe.append({
+            "sub_id": sub_id,
+            "index": idx,
+            "fp": config_fingerprint(src_raw),
+            "name": custom_name,
+        })
 
     expires_at = None
     if expiry_days > 0:
         expires_at = (datetime.now(timezone.utc) + timedelta(days=expiry_days)).isoformat()
 
-    gen_id, _token = storage.create_generated_sub(user_id, name, final_configs, expires_at=expires_at)
+    gen_id, _token = storage.create_generated_sub(
+        user_id, name, final_configs, expires_at=expires_at, items=recipe
+    )
     gen = storage.get_generated_by_id(gen_id, user_id)
     return web.json_response(_gen_summary(gen, request), status=201)
 
@@ -313,8 +323,11 @@ async def api_get_generated(request: web.Request) -> web.Response:
     gen = storage.get_generated_by_id(gen_id, request["user_id"])
     if not gen:
         return _err("پیدا نشد.", 404)
+    live = storage.resolve_generated_configs(gen, persist=True)
     data = _gen_summary(gen, request)
-    data["configs"] = [_config_summary(i, c) for i, c in enumerate(gen["configs"])]
+    data["config_count"] = len(live)
+    data["configs"] = [_config_summary(i, c) for i, c in enumerate(live)]
+    data["live"] = bool(gen.get("items"))
     return web.json_response(data)
 
 
@@ -341,6 +354,7 @@ async def api_add_to_generated(request: web.Request) -> web.Response:
     subs_cache: dict[int, dict] = {}
     final_configs = []
 
+    recipe = []
     for item in items:
         try:
             sub_id = int(item["sub_id"])
@@ -358,13 +372,18 @@ async def api_add_to_generated(request: web.Request) -> web.Response:
         if idx < 0 or idx >= len(sub["configs"]):
             return _err("ایندکس کانفیگ نامعتبره.")
 
-        raw = sub["configs"][idx]
+        src_raw = sub["configs"][idx]
         custom_name = (item.get("name") or "").strip()
-        if custom_name:
-            raw = rename_config(raw, custom_name)
+        raw = rename_config(src_raw, custom_name) if custom_name else src_raw
         final_configs.append(raw)
+        recipe.append({
+            "sub_id": sub_id,
+            "index": idx,
+            "fp": config_fingerprint(src_raw),
+            "name": custom_name,
+        })
 
-    total = storage.add_configs_to_generated(gen_id, user_id, final_configs)
+    total = storage.add_configs_to_generated(gen_id, user_id, final_configs, new_items=recipe)
     if total is None:
         return _err("پیدا نشد.", 404)
 
