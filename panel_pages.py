@@ -163,7 +163,10 @@ async def handle_logout(request: web.Request) -> web.Response:
 
 async def handle_panel_index(request: web.Request) -> web.Response:
     index_path = STATIC_DIR / "panel.html"
-    return web.Response(text=index_path.read_text(encoding="utf-8"), content_type="text/html", charset="utf-8")
+    resp = web.Response(text=index_path.read_text(encoding="utf-8"), content_type="text/html", charset="utf-8")
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
 
 
 _MINIAPP_HTML = """<!DOCTYPE html>

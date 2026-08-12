@@ -874,7 +874,7 @@ function renderGenDetail(gen) {
       <code class="url">${esc(gen.url)}</code>
       <div class="action-bar">
         <button class="btn-sm btn" id="copy-gen-url">${icon("copy", "icon-sm")} کپی لینک</button>
-        <button class="btn-sm btn" id="add-to-gen-btn">${icon("plus", "icon-sm")} افزودن کانفیگ</button>
+        <button class="btn" id="add-to-gen-btn">${icon("plus", "icon-sm")} افزودن کانفیگ از اشتراک دیگر</button>
       </div>
     </div>
     <div class="card">${rows || '<div class="empty-state">کانفیگی نیست.</div>'}</div>
