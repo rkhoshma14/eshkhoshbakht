@@ -84,6 +84,7 @@ class RenameState(StatesGroup):
 
 class GenEditState(StatesGroup):
     waiting_cfg_name = State()
+    waiting_note = State()
 
 
 class BuildCustomState(StatesGroup):
@@ -188,13 +189,16 @@ def gen_detail_text(g: dict) -> str:
     else:
         exp_line = "⏰ انقضا: بدون محدودیت\n"
     live_line = "🔄 همگام با منبع\n" if g.get("items") else "📌 ثابت (snapshot)\n"
+    note = (g.get("note") or "").strip()
+    note_line = f"📝 یادداشت: {escape(note)}\n" if note else ""
     text = (
         f"🛠 <b>{escape(g['name'])}</b>\n"
         f"📦 {len(g['configs'])} کانفیگ\n"
         f"🕒 ساخته‌شده: {created}\n"
         f"{exp_line}"
         f"📊 {escape(remaining)}\n"
-        f"{live_line}\n"
+        f"{live_line}"
+        f"{note_line}\n"
         f"🔗 لینک اشتراک:\n<code>{url}</code>"
     )
     return text
@@ -300,6 +304,10 @@ def build_gen_detail_keyboard(gen_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="📋 مدیریت کانفیگ‌ها", callback_data=f"gen_cfgs:{gen_id}:0")],
             [InlineKeyboardButton(text="➕ افزودن کانفیگ از یک اشتراک دیگه", callback_data=f"gen_add:{gen_id}")],
+            [
+                InlineKeyboardButton(text="⏰ تغییر انقضا", callback_data=f"gen_expiry:{gen_id}"),
+                InlineKeyboardButton(text="📝 یادداشت", callback_data=f"gen_note:{gen_id}"),
+            ],
             [InlineKeyboardButton(text="🗑 حذف این اشتراک", callback_data=f"gen_delete:{gen_id}")],
             [InlineKeyboardButton(text="« بازگشت به لیست", callback_data="gens_back")],
         ]
@@ -686,6 +694,12 @@ def _sub_userinfo(gen: dict) -> str:
 
 
 async def handle_sub(request: web.Request) -> web.Response:
+    # پاک‌سازی خودکار اشتراک‌های منقضی‌شدهٔ قدیمی (بیش از ۷ روز)
+    try:
+        storage.cleanup_old_expired_generated(grace_days=7)
+    except Exception:
+        pass
+
     token = request.match_info.get("token", "")
     gen = storage.get_generated_by_token(token)
     if not gen:
@@ -1690,6 +1704,123 @@ async def gen_cfg_rename_apply(message: Message, state: FSMContext):
         )
 
 
+# ---------- تغییر انقضای اشتراک سفارشی ----------
+
+@dp.callback_query(F.data.regexp(r"^gen_expiry:\d+$"))
+async def gen_change_expiry(callback: CallbackQuery):
+    gen_id = int(callback.data.split(":")[1])
+    g = storage.get_generated_by_id(gen_id, callback.from_user.id)
+    if not g:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="♾ بدون انقضا", callback_data=f"gen_set_expiry:{gen_id}:0")],
+            [
+                InlineKeyboardButton(text="۷ روز", callback_data=f"gen_set_expiry:{gen_id}:7"),
+                InlineKeyboardButton(text="۳۰ روز", callback_data=f"gen_set_expiry:{gen_id}:30"),
+            ],
+            [
+                InlineKeyboardButton(text="۹۰ روز", callback_data=f"gen_set_expiry:{gen_id}:90"),
+                InlineKeyboardButton(text="۱۸۰ روز", callback_data=f"gen_set_expiry:{gen_id}:180"),
+            ],
+            [InlineKeyboardButton(text="« انصراف", callback_data=f"gen_open:{gen_id}")],
+        ]
+    )
+    await callback.message.edit_text(
+        f"تاریخ انقضای جدید برای «{escape(g['name'])}» را انتخاب کن:\n"
+        f"(از همین لحظه محاسبه می‌شود)",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.regexp(r"^gen_set_expiry:\d+:\d+$"))
+async def gen_set_expiry(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    gen_id, days = int(parts[1]), int(parts[2])
+    g = storage.get_generated_by_id(gen_id, callback.from_user.id)
+    if not g:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+    expires_at = None
+    if days > 0:
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    storage.update_generated_expiry(gen_id, callback.from_user.id, expires_at)
+    g = storage.get_generated_by_id(gen_id, callback.from_user.id)
+    await callback.message.edit_text(
+        gen_detail_text(g),
+        reply_markup=build_gen_detail_keyboard(gen_id),
+        parse_mode="HTML",
+    )
+    await callback.answer("انقضا بروزرسانی شد ✅")
+
+
+# ---------- یادداشت اشتراک سفارشی ----------
+
+@dp.callback_query(F.data.regexp(r"^gen_note:\d+$"))
+async def gen_ask_note(callback: CallbackQuery, state: FSMContext):
+    gen_id = int(callback.data.split(":")[1])
+    g = storage.get_generated_by_id(gen_id, callback.from_user.id)
+    if not g:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+    await state.update_data(gen_id=gen_id)
+    await state.set_state(GenEditState.waiting_note)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🗑 پاک کردن یادداشت", callback_data=f"gen_note_clear:{gen_id}")],
+            [InlineKeyboardButton(text="« انصراف", callback_data=f"gen_open:{gen_id}")],
+        ]
+    )
+    current = (g.get("note") or "").strip()
+    if current:
+        prompt = (
+            f"یادداشت جدید برای «{escape(g['name'])}» را بفرست "
+            f"(جایگزین یادداشت فعلی می‌شود):\n\n📝 فعلی:\n{escape(current)}"
+        )
+    else:
+        prompt = f"یادداشت خصوصی برای «{escape(g['name'])}» را بفرست:"
+    await callback.message.answer(prompt, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+
+@dp.message(GenEditState.waiting_note)
+async def gen_save_note(message: Message, state: FSMContext):
+    if await bail_if_menu_button(message, state):
+        return
+    data = await state.get_data()
+    gen_id = data.get("gen_id")
+    if not gen_id:
+        await state.clear()
+        return await message.answer("خطا. دوباره تلاش کن.")
+    note = (message.text or "").strip()
+    storage.update_generated_note(gen_id, message.from_user.id, note)
+    await state.clear()
+    g = storage.get_generated_by_id(gen_id, message.from_user.id)
+    if not g:
+        return await message.answer("اشتراک پیدا نشد.")
+    await message.answer(
+        gen_detail_text(g),
+        reply_markup=build_gen_detail_keyboard(gen_id),
+        parse_mode="HTML",
+    )
+
+
+@dp.callback_query(F.data.regexp(r"^gen_note_clear:\d+$"))
+async def gen_clear_note(callback: CallbackQuery, state: FSMContext):
+    gen_id = int(callback.data.split(":")[1])
+    storage.update_generated_note(gen_id, callback.from_user.id, "")
+    await state.clear()
+    g = storage.get_generated_by_id(gen_id, callback.from_user.id)
+    if not g:
+        return await callback.answer("پیدا نشد.", show_alert=True)
+    await callback.message.edit_text(
+        gen_detail_text(g),
+        reply_markup=build_gen_detail_keyboard(gen_id),
+        parse_mode="HTML",
+    )
+    await callback.answer("یادداشت پاک شد")
+
+
 @dp.callback_query(F.data.regexp(r"^gen_delete:\d+$"))
 async def delete_generated(callback: CallbackQuery):
     gen_id = int(callback.data.split(":")[1])
@@ -2001,6 +2132,13 @@ async def main():
     logger.info(f"Bot username: @{me.username}")
     if not auth.panel_enabled():
         logger.warning("ADMIN_IDS ست نشده — پنل وب غیرفعال می‌مونه.")
+
+    try:
+        removed = storage.cleanup_old_expired_generated(grace_days=7)
+        if removed:
+            logger.info(f"پاک‌سازی خودکار: {removed} اشتراک منقضی‌شدهٔ قدیمی حذف شد.")
+    except Exception as e:
+        logger.warning(f"cleanup failed: {e}")
 
     port = int(os.environ.get("PORT", 8080))
     web_app = create_web_app()

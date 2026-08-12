@@ -59,6 +59,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     gen_cols = {row[1] for row in conn.execute("PRAGMA table_info(generated_subs)").fetchall()}
     if gen_cols and "items" not in gen_cols:
         conn.execute("ALTER TABLE generated_subs ADD COLUMN items TEXT")
+    gen_cols = {row[1] for row in conn.execute("PRAGMA table_info(generated_subs)").fetchall()}
+    if gen_cols and "note" not in gen_cols:
+        conn.execute("ALTER TABLE generated_subs ADD COLUMN note TEXT")
         conn.commit()
 
 
@@ -84,7 +87,8 @@ def _conn():
             configs TEXT NOT NULL,
             created_at TEXT NOT NULL,
             expires_at TEXT,
-            items TEXT
+            items TEXT,
+            note TEXT
         )"""
     )
     _migrate(conn)
@@ -182,12 +186,13 @@ def create_generated_sub(
     configs: list[str],
     expires_at: str | None = None,
     items: list[dict] | None = None,
+    note: str = "",
 ) -> tuple[int, str]:
     """items: لیست منبع برای لایوآپدیت — [{"sub_id", "index", "name", "fp"}, ...]"""
     token = secrets.token_urlsafe(16)
     conn = _conn()
     cur = conn.execute(
-        "INSERT INTO generated_subs (user_id, name, token, configs, created_at, expires_at, items) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO generated_subs (user_id, name, token, configs, created_at, expires_at, items, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             user_id,
             name,
@@ -196,6 +201,7 @@ def create_generated_sub(
             _now_iso(),
             expires_at,
             json.dumps(items) if items is not None else None,
+            note or "",
         ),
     )
     conn.commit()
@@ -205,12 +211,12 @@ def create_generated_sub(
 
 
 def _row_to_generated(row) -> dict:
-    # پشتیبانی از هر دو شکل (با/بدون items)
-    if len(row) >= 8:
-        gid, user_id, name, tok, configs_json, created_at, expires_at, items_json = row[:8]
-    else:
-        gid, user_id, name, tok, configs_json, created_at, expires_at = row[:7]
-        items_json = None
+    """پشتیبانی از شکل‌های قدیمی (بدون items / بدون note) و جدید."""
+    # ترتیب: id, user_id, name, token, configs, created_at, expires_at, items, note
+    n = len(row)
+    gid, user_id, name, tok, configs_json, created_at, expires_at = row[:7]
+    items_json = row[7] if n >= 8 else None
+    note = row[8] if n >= 9 else ""
     items = None
     if items_json:
         try:
@@ -226,13 +232,14 @@ def _row_to_generated(row) -> dict:
         "created_at": created_at,
         "expires_at": expires_at,
         "items": items,
+        "note": note or "",
     }
 
 
 def get_generated_by_token(token: str) -> dict | None:
     conn = _conn()
     row = conn.execute(
-        "SELECT id, user_id, name, token, configs, created_at, expires_at, items FROM generated_subs WHERE token=?",
+        "SELECT id, user_id, name, token, configs, created_at, expires_at, items, note FROM generated_subs WHERE token=?",
         (token,),
     ).fetchone()
     conn.close()
@@ -244,7 +251,7 @@ def get_generated_by_token(token: str) -> dict | None:
 def get_generated_by_id(gen_id: int, user_id: int) -> dict | None:
     conn = _conn()
     row = conn.execute(
-        "SELECT id, user_id, name, token, configs, created_at, expires_at, items FROM generated_subs WHERE id=? AND user_id=?",
+        "SELECT id, user_id, name, token, configs, created_at, expires_at, items, note FROM generated_subs WHERE id=? AND user_id=?",
         (gen_id, user_id),
     ).fetchone()
     conn.close()
@@ -254,20 +261,19 @@ def get_generated_by_id(gen_id: int, user_id: int) -> dict | None:
 
 
 def list_generated_subs(user_id: int) -> list[dict]:
+    # اول اشتراک‌های خیلی قدیمیِ منقضی را پاک کن
+    cleanup_old_expired_generated()
     conn = _conn()
     rows = conn.execute(
-        "SELECT id, name, token, configs, created_at, expires_at, items FROM generated_subs WHERE user_id=? ORDER BY id DESC",
+        "SELECT id, name, token, configs, created_at, expires_at, items, note FROM generated_subs WHERE user_id=? ORDER BY id DESC",
         (user_id,),
     ).fetchall()
     conn.close()
     result = []
     for row in rows:
-        if len(row) >= 7:
-            gid, name, token, configs_json, created_at, expires_at = row[:6]
-            items_json = row[6] if len(row) > 6 else None
-        else:
-            gid, name, token, configs_json, created_at, expires_at = row[:6]
-            items_json = None
+        gid, name, token, configs_json, created_at, expires_at = row[:6]
+        items_json = row[6] if len(row) > 6 else None
+        note = row[7] if len(row) > 7 else ""
         configs = json.loads(configs_json)
         items = None
         if items_json:
@@ -284,6 +290,7 @@ def list_generated_subs(user_id: int) -> list[dict]:
                 "created_at": created_at,
                 "expires_at": expires_at,
                 "items": items,
+                "note": note or "",
             }
         )
     return result
@@ -318,6 +325,45 @@ def update_generated_expiry(gen_id: int, user_id: int, expires_at: str | None) -
     ok = cur.rowcount > 0
     conn.close()
     return ok
+
+
+def update_generated_note(gen_id: int, user_id: int, note: str) -> bool:
+    conn = _conn()
+    cur = conn.execute(
+        "UPDATE generated_subs SET note=? WHERE id=? AND user_id=?",
+        (note, gen_id, user_id),
+    )
+    conn.commit()
+    ok = cur.rowcount > 0
+    conn.close()
+    return ok
+
+
+def cleanup_old_expired_generated(grace_days: int = 7) -> int:
+    """
+    اشتراک‌های سفارشی که بیش از grace_days از تاریخ انقضایشان گذشته را
+    به صورت خودکار از دیتابیس حذف می‌کند. تعداد حذف‌شده را برمی‌گرداند.
+    """
+    from datetime import timedelta
+
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT id, expires_at FROM generated_subs WHERE expires_at IS NOT NULL AND expires_at != ''"
+    ).fetchall()
+    now = datetime.now(timezone.utc)
+    to_delete = []
+    for gid, exp in rows:
+        try:
+            exp_dt = datetime.fromisoformat(exp)
+            if exp_dt + timedelta(days=grace_days) < now:
+                to_delete.append(gid)
+        except Exception:
+            continue
+    if to_delete:
+        conn.executemany("DELETE FROM generated_subs WHERE id=?", [(i,) for i in to_delete])
+        conn.commit()
+    conn.close()
+    return len(to_delete)
 
 
 def add_configs_to_generated(

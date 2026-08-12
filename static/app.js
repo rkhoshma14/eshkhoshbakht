@@ -807,7 +807,7 @@ function renderGeneratedList() {
     <div class="list-item" data-open-gen="${g.id}">
       <div>
         <div class="title">${esc(g.name)} ${g.expired ? '<span class="badge badge-expired">منقضی</span>' : ""} ${g.live ? '<span class="badge badge-ms">لایو</span>' : ""}</div>
-        <div class="subtitle">${g.config_count} کانفیگ · ${fmtDate(g.created_at)}${g.remaining_text ? ` · ${esc(g.remaining_text)}` : ""}</div>
+        <div class="subtitle">${g.config_count} کانفیگ · ${fmtDate(g.created_at)}${g.remaining_text ? ` · ${esc(g.remaining_text)}` : ""}${g.note ? " · 📝" : ""}</div>
       </div>
       <span class="chevron">${icon("chevron")}</span>
     </div>
@@ -858,6 +858,10 @@ function renderGenDetail(gen) {
     document.getElementById("delete-gen-btn").addEventListener("click", () => confirmDeleteGen(gen));
     const addBtn = document.getElementById("add-to-gen-btn");
     if (addBtn) addBtn.addEventListener("click", () => startAddToGenerated(gen));
+    const expBtn = document.getElementById("change-expiry-btn");
+    if (expBtn) expBtn.addEventListener("click", () => openChangeExpiry(gen));
+    const noteBtn = document.getElementById("edit-gen-note-btn");
+    if (noteBtn) noteBtn.addEventListener("click", () => openEditGenNote(gen));
     app.querySelectorAll("[data-gen-rename]").forEach((btn) => {
       btn.addEventListener("click", () => openRenameGenConfig(gen, parseInt(btn.dataset.genRename)));
     });
@@ -871,6 +875,9 @@ function renderGenDetail(gen) {
     : "بدون محدودیت";
   const liveLabel = gen.live ? " · همگام با منبع" : " · ثابت";
   const remainingLabel = gen.remaining_text ? gen.remaining_text : "";
+  const noteHtml = gen.note
+    ? `<div class="detail-meta" style="margin-top:8px">📝 ${esc(gen.note)}</div>`
+    : "";
 
   return `
     <button class="back-link" id="back-to-gens">${icon("back", "icon-sm")} بازگشت</button>
@@ -880,6 +887,7 @@ function renderGenDetail(gen) {
           <div class="detail-title">${esc(gen.name)}</div>
           <div class="detail-meta">${gen.config_count} کانفیگ · ${fmtDate(gen.created_at)} · انقضا: ${expLabel}${liveLabel}</div>
           ${remainingLabel ? `<div class="detail-meta" style="margin-top:6px;font-weight:600;color:var(--accent)">${esc(remainingLabel)}</div>` : ""}
+          ${noteHtml}
         </div>
         <button class="btn-sm btn btn-danger" id="delete-gen-btn">${icon("trash", "icon-sm")} حذف</button>
       </div>
@@ -887,6 +895,8 @@ function renderGenDetail(gen) {
       <code class="url">${esc(gen.url)}</code>
       <div class="action-bar">
         <button class="btn-sm btn" id="copy-gen-url">${icon("copy", "icon-sm")} کپی لینک</button>
+        <button class="btn-sm btn" id="change-expiry-btn">⏰ تغییر انقضا</button>
+        <button class="btn-sm btn" id="edit-gen-note-btn">📝 یادداشت</button>
         <button class="btn" id="add-to-gen-btn">${icon("plus", "icon-sm")} افزودن کانفیگ از اشتراک دیگر</button>
       </div>
     </div>
@@ -959,6 +969,68 @@ function confirmDeleteGen(gen) {
       state.view = "list";
       state.currentGen = null;
       await loadGenerated();
+    } catch (e) { toast(e.message, true); }
+  });
+}
+
+function openChangeExpiry(gen) {
+  openModal(`
+    <h2>⏰ تغییر تاریخ انقضا</h2>
+    <p class="muted">از همین لحظه محاسبه می‌شود. اشتراک‌های منقضی‌شده بعد از ۷ روز به‌صورت خودکار حذف می‌شوند.</p>
+    <div class="modal-actions" style="flex-wrap:wrap;gap:8px">
+      <button class="btn" data-days="0">♾ بدون انقضا</button>
+      <button class="btn" data-days="7">۷ روز</button>
+      <button class="btn" data-days="30">۳۰ روز</button>
+      <button class="btn" data-days="90">۹۰ روز</button>
+      <button class="btn" data-days="180">۱۸۰ روز</button>
+      <button class="btn-outline btn" id="cancel-btn">انصراف</button>
+    </div>
+  `);
+  document.getElementById("cancel-btn").addEventListener("click", closeModal);
+  document.querySelectorAll("[data-days]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const days = parseInt(btn.dataset.days);
+      try {
+        const updated = await api("POST", `/api/generated/${gen.id}/expiry`, { expiry_days: days });
+        Object.assign(state.currentGen, updated);
+        closeModal();
+        toast("انقضا بروزرسانی شد");
+        render();
+      } catch (e) { toast(e.message, true); }
+    });
+  });
+}
+
+function openEditGenNote(gen) {
+  openModal(`
+    <h2>📝 یادداشت خصوصی</h2>
+    <p class="muted">فقط برای خودت قابل مشاهده است (مشتری نمی‌بیند).</p>
+    <label>یادداشت</label>
+    <textarea id="gen-note-input" rows="4" placeholder="مثلاً: برای مشتری فلان">${esc(gen.note || "")}</textarea>
+    <div class="modal-actions">
+      <button class="btn-outline btn" id="cancel-btn">انصراف</button>
+      <button class="btn-outline btn" id="clear-note-btn">پاک کردن</button>
+      <button class="btn" id="confirm-btn">ذخیره</button>
+    </div>
+  `);
+  document.getElementById("cancel-btn").addEventListener("click", closeModal);
+  document.getElementById("clear-note-btn").addEventListener("click", async () => {
+    try {
+      const updated = await api("POST", `/api/generated/${gen.id}/note`, { clear: true });
+      Object.assign(state.currentGen, updated);
+      closeModal();
+      toast("یادداشت پاک شد");
+      render();
+    } catch (e) { toast(e.message, true); }
+  });
+  document.getElementById("confirm-btn").addEventListener("click", async () => {
+    const note = document.getElementById("gen-note-input").value;
+    try {
+      const updated = await api("POST", `/api/generated/${gen.id}/note`, { note });
+      Object.assign(state.currentGen, updated);
+      closeModal();
+      toast("یادداشت ذخیره شد");
+      render();
     } catch (e) { toast(e.message, true); }
   });
 }
