@@ -431,3 +431,70 @@ def resolve_generated_configs(gen: dict, persist: bool = True) -> list[str]:
         gen["configs"] = resolved
 
     return resolved
+
+
+
+def delete_config_from_generated(gen_id: int, user_id: int, idx: int) -> int | None:
+    """حذف یک کانفیگ از اشتراک سفارشی (و آیتم منبع متناظر). تعداد باقی‌مانده یا None."""
+    conn = _conn()
+    row = conn.execute(
+        "SELECT configs, items FROM generated_subs WHERE id=? AND user_id=?",
+        (gen_id, user_id),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return None
+    configs = json.loads(row[0])
+    if idx < 0 or idx >= len(configs):
+        conn.close()
+        return None
+    configs.pop(idx)
+    items = None
+    if row[1]:
+        try:
+            items = json.loads(row[1])
+        except Exception:
+            items = None
+    if isinstance(items, list) and idx < len(items):
+        items.pop(idx)
+    conn.execute(
+        "UPDATE generated_subs SET configs=?, items=? WHERE id=? AND user_id=?",
+        (json.dumps(configs), json.dumps(items) if items is not None else None, gen_id, user_id),
+    )
+    conn.commit()
+    conn.close()
+    return len(configs)
+
+
+def rename_config_in_generated(gen_id: int, user_id: int, idx: int, new_name: str) -> str | None:
+    """رنیم یک کانفیگ داخل اشتراک سفارشی. remark جدید یا None در صورت خطا."""
+    from config_parser import rename_config, get_remark
+
+    conn = _conn()
+    row = conn.execute(
+        "SELECT configs, items FROM generated_subs WHERE id=? AND user_id=?",
+        (gen_id, user_id),
+    ).fetchone()
+    if not row:
+        conn.close()
+        return None
+    configs = json.loads(row[0])
+    if idx < 0 or idx >= len(configs):
+        conn.close()
+        return None
+    configs[idx] = rename_config(configs[idx], new_name)
+    items = None
+    if row[1]:
+        try:
+            items = json.loads(row[1])
+        except Exception:
+            items = None
+    if isinstance(items, list) and idx < len(items) and isinstance(items[idx], dict):
+        items[idx]["name"] = new_name
+    conn.execute(
+        "UPDATE generated_subs SET configs=?, items=? WHERE id=? AND user_id=?",
+        (json.dumps(configs), json.dumps(items) if items is not None else None, gen_id, user_id),
+    )
+    conn.commit()
+    conn.close()
+    return get_remark(configs[idx]) or new_name

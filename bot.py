@@ -80,6 +80,10 @@ class RenameState(StatesGroup):
     waiting_for_name = State()
 
 
+class GenEditState(StatesGroup):
+    waiting_cfg_name = State()
+
+
 class BuildCustomState(StatesGroup):
     selecting = State()          # انتخاب کانفیگ‌ها (تک‌منبع یا چندمنبع)
     selecting_sources = State()  # انتخاب چند اشتراک منبع
@@ -289,9 +293,40 @@ def build_multi_select_keyboard(
 def build_gen_detail_keyboard(gen_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="📋 مدیریت کانفیگ‌ها", callback_data=f"gen_cfgs:{gen_id}:0")],
             [InlineKeyboardButton(text="➕ افزودن کانفیگ از یک اشتراک دیگه", callback_data=f"gen_add:{gen_id}")],
             [InlineKeyboardButton(text="🗑 حذف این اشتراک", callback_data=f"gen_delete:{gen_id}")],
             [InlineKeyboardButton(text="« بازگشت به لیست", callback_data="gens_back")],
+        ]
+    )
+
+
+def build_gen_configs_keyboard(gen_id: int, configs: list[str], page: int = 0) -> InlineKeyboardMarkup:
+    start = page * PAGE_SIZE
+    chunk = configs[start : start + PAGE_SIZE]
+    rows = []
+    for i, raw in enumerate(chunk, start=start):
+        remark = get_remark(raw) or "(بدون نام)"
+        proto = get_protocol(raw)
+        label = f"{i + 1}. [{proto}] {remark[:28]}"
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"gen_cfg:{gen_id}:{i}")])
+    nav = []
+    if start > 0:
+        nav.append(InlineKeyboardButton(text="« قبلی", callback_data=f"gen_cfgs:{gen_id}:{page - 1}"))
+    if start + PAGE_SIZE < len(configs):
+        nav.append(InlineKeyboardButton(text="بعدی »", callback_data=f"gen_cfgs:{gen_id}:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="« بازگشت", callback_data=f"gen_open:{gen_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_gen_cfg_action_keyboard(gen_id: int, idx: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ تغییر اسم", callback_data=f"gen_cfg_rename:{gen_id}:{idx}")],
+            [InlineKeyboardButton(text="🗑 حذف این کانفیگ", callback_data=f"gen_cfg_del:{gen_id}:{idx}")],
+            [InlineKeyboardButton(text="« بازگشت به لیست کانفیگ‌ها", callback_data=f"gen_cfgs:{gen_id}:0")],
         ]
     )
 
@@ -1514,6 +1549,140 @@ async def open_generated(callback: CallbackQuery):
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+
+@dp.callback_query(F.data.regexp(r"^gen_cfgs:\d+:\d+$"))
+async def gen_list_configs(callback: CallbackQuery):
+    _, gen_id, page = callback.data.split(":")
+    gen_id, page = int(gen_id), int(page)
+    g = storage.get_generated_by_id(gen_id, callback.from_user.id)
+    if not g:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+    configs = storage.resolve_generated_configs(g, persist=True)
+    if not configs:
+        return await callback.answer("کانفیگی نیست.", show_alert=True)
+    await callback.message.edit_text(
+        f"📋 کانفیگ‌های «{escape(g['name'])}» — یکی را انتخاب کن:",
+        reply_markup=build_gen_configs_keyboard(gen_id, configs, page),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.regexp(r"^gen_cfg:\d+:\d+$"))
+async def gen_cfg_pick(callback: CallbackQuery):
+    _, gen_id, idx = callback.data.split(":")
+    gen_id, idx = int(gen_id), int(idx)
+    g = storage.get_generated_by_id(gen_id, callback.from_user.id)
+    if not g:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+    configs = storage.resolve_generated_configs(g, persist=True)
+    if idx < 0 or idx >= len(configs):
+        return await callback.answer("ایندکس نامعتبر.", show_alert=True)
+    raw = configs[idx]
+    remark = get_remark(raw) or "(بدون نام)"
+    proto = get_protocol(raw)
+    await callback.message.edit_text(
+        f"⚙️ <b>[{escape(proto)}]</b> {escape(remark)}\n\n"
+        f"اشتراک: {escape(g['name'])}",
+        reply_markup=build_gen_cfg_action_keyboard(gen_id, idx),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.regexp(r"^gen_cfg_del:\d+:\d+$"))
+async def gen_cfg_del_ask(callback: CallbackQuery):
+    _, gen_id, idx = callback.data.split(":")
+    gen_id, idx = int(gen_id), int(idx)
+    g = storage.get_generated_by_id(gen_id, callback.from_user.id)
+    if not g:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+    configs = storage.resolve_generated_configs(g, persist=True)
+    if idx < 0 or idx >= len(configs):
+        return await callback.answer("ایندکس نامعتبر.", show_alert=True)
+    remark = get_remark(configs[idx]) or "(بدون نام)"
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ حذف کن", callback_data=f"gen_cfg_del_yes:{gen_id}:{idx}"),
+                InlineKeyboardButton(text="❌ انصراف", callback_data=f"gen_cfg:{gen_id}:{idx}"),
+            ]
+        ]
+    )
+    await callback.message.edit_text(
+        f"مطمئنی می‌خوای کانفیگ «{escape(remark)}» از این اشتراک حذف بشه؟",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.regexp(r"^gen_cfg_del_yes:\d+:\d+$"))
+async def gen_cfg_del_yes(callback: CallbackQuery):
+    _, gen_id, idx = callback.data.split(":")
+    gen_id, idx = int(gen_id), int(idx)
+    total = storage.delete_config_from_generated(gen_id, callback.from_user.id, idx)
+    if total is None:
+        return await callback.answer("خطا در حذف.", show_alert=True)
+    g = storage.get_generated_by_id(gen_id, callback.from_user.id)
+    await callback.answer("حذف شد ✅")
+    if not g or total == 0:
+        await callback.message.edit_text(
+            gen_detail_text(g) if g else "اشتراک خالی شد.",
+            reply_markup=build_gen_detail_keyboard(gen_id) if g else main_menu(),
+            parse_mode="HTML",
+        )
+        return
+    configs = storage.resolve_generated_configs(g, persist=True)
+    await callback.message.edit_text(
+        f"✅ حذف شد. باقی‌مانده: {total}\n\n📋 کانفیگ‌های «{escape(g['name'])}»:",
+        reply_markup=build_gen_configs_keyboard(gen_id, configs, 0),
+        parse_mode="HTML",
+    )
+
+
+@dp.callback_query(F.data.regexp(r"^gen_cfg_rename:\d+:\d+$"))
+async def gen_cfg_rename_start(callback: CallbackQuery, state: FSMContext):
+    _, gen_id, idx = callback.data.split(":")
+    gen_id, idx = int(gen_id), int(idx)
+    g = storage.get_generated_by_id(gen_id, callback.from_user.id)
+    if not g:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+    configs = storage.resolve_generated_configs(g, persist=True)
+    if idx < 0 or idx >= len(configs):
+        return await callback.answer("ایندکس نامعتبر.", show_alert=True)
+    await state.set_state(GenEditState.waiting_cfg_name)
+    await state.update_data(edit_gen_id=gen_id, edit_cfg_idx=idx)
+    remark = get_remark(configs[idx]) or "(بدون نام)"
+    await callback.message.edit_text(
+        f"✏️ اسم جدید برای «{escape(remark)}» را بفرست:",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@dp.message(GenEditState.waiting_cfg_name)
+async def gen_cfg_rename_apply(message: Message, state: FSMContext):
+    data = await state.get_data()
+    gen_id = data.get("edit_gen_id")
+    idx = data.get("edit_cfg_idx")
+    new_name = (message.text or "").strip()
+    await state.clear()
+    if not new_name or gen_id is None or idx is None:
+        return await message.answer("لغو شد.", reply_markup=main_menu())
+    remark = storage.rename_config_in_generated(gen_id, message.from_user.id, idx, new_name)
+    if remark is None:
+        return await message.answer("خطا در رنیم.", reply_markup=main_menu())
+    g = storage.get_generated_by_id(gen_id, message.from_user.id)
+    await message.answer(f"✅ اسم شد: <b>{escape(remark)}</b>", parse_mode="HTML")
+    if g:
+        await message.answer(
+            gen_detail_text(g),
+            reply_markup=build_gen_detail_keyboard(gen_id),
+            parse_mode="HTML",
+        )
 
 
 @dp.callback_query(F.data.regexp(r"^gen_delete:\d+$"))

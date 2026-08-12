@@ -839,10 +839,14 @@ async function openGen(id) {
 }
 
 function renderGenDetail(gen) {
-  const rows = gen.configs.map((c) => `
+  const rows = (gen.configs || []).map((c) => `
     <div class="config-row">
       <span class="badge">${esc(c.protocol)}</span>
       <span class="remark">${esc(c.remark || "(بدون نام)")}</span>
+      <div class="config-actions">
+        <button class="btn-sm btn" data-gen-rename="${c.index}" title="تغییر اسم">${icon("edit", "icon-sm")}</button>
+        <button class="btn-sm btn btn-danger" data-gen-del="${c.index}" title="حذف">${icon("trash", "icon-sm")}</button>
+      </div>
     </div>
   `).join("");
 
@@ -854,6 +858,12 @@ function renderGenDetail(gen) {
     document.getElementById("delete-gen-btn").addEventListener("click", () => confirmDeleteGen(gen));
     const addBtn = document.getElementById("add-to-gen-btn");
     if (addBtn) addBtn.addEventListener("click", () => startAddToGenerated(gen));
+    app.querySelectorAll("[data-gen-rename]").forEach((btn) => {
+      btn.addEventListener("click", () => openRenameGenConfig(gen, parseInt(btn.dataset.genRename)));
+    });
+    app.querySelectorAll("[data-gen-del]").forEach((btn) => {
+      btn.addEventListener("click", () => confirmDeleteGenConfig(gen, parseInt(btn.dataset.genDel)));
+    });
   }, 0);
 
   const expLabel = gen.expires_at
@@ -880,6 +890,53 @@ function renderGenDetail(gen) {
     </div>
     <div class="card">${rows || '<div class="empty-state">کانفیگی نیست.</div>'}</div>
   `;
+}
+
+function openRenameGenConfig(gen, idx) {
+  const cfg = (gen.configs || []).find((c) => c.index === idx);
+  const current = cfg ? (cfg.remark || "") : "";
+  openModal(`
+    <h2>${icon("edit")} تغییر اسم کانفیگ</h2>
+    <label>اسم جدید</label>
+    <input type="text" id="gen-rename-input" value="${esc(current)}" placeholder="مثلاً: گیمینگ-۱" />
+    <div class="modal-actions">
+      <button class="btn-outline btn" id="cancel-btn">انصراف</button>
+      <button class="btn" id="confirm-btn">ذخیره</button>
+    </div>
+  `);
+  document.getElementById("cancel-btn").addEventListener("click", closeModal);
+  document.getElementById("confirm-btn").addEventListener("click", async () => {
+    const name = document.getElementById("gen-rename-input").value.trim();
+    if (!name) return toast("اسم را وارد کن", true);
+    try {
+      state.currentGen = await api("POST", `/api/generated/${gen.id}/configs/${idx}/rename`, { name });
+      closeModal();
+      toast("اسم تغییر کرد");
+      render();
+    } catch (e) { toast(e.message, true); }
+  });
+}
+
+function confirmDeleteGenConfig(gen, idx) {
+  const cfg = (gen.configs || []).find((c) => c.index === idx);
+  const label = cfg ? (cfg.remark || cfg.protocol) : `#${idx}`;
+  openModal(`
+    <h2>${icon("trash")} حذف کانفیگ</h2>
+    <p class="muted">«${esc(label)}» از این اشتراک سفارشی حذف شود؟</p>
+    <div class="modal-actions">
+      <button class="btn-outline btn" id="cancel-btn">انصراف</button>
+      <button class="btn btn-danger" id="confirm-btn">حذف</button>
+    </div>
+  `);
+  document.getElementById("cancel-btn").addEventListener("click", closeModal);
+  document.getElementById("confirm-btn").addEventListener("click", async () => {
+    try {
+      state.currentGen = await api("DELETE", `/api/generated/${gen.id}/configs/${idx}`);
+      closeModal();
+      toast("حذف شد");
+      render();
+    } catch (e) { toast(e.message, true); }
+  });
 }
 
 function confirmDeleteGen(gen) {

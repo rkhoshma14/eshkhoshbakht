@@ -394,6 +394,52 @@ async def api_add_to_generated(request: web.Request) -> web.Response:
     return web.json_response(data)
 
 
+
+async def api_rename_gen_config(request: web.Request) -> web.Response:
+    gen_id = int(request.match_info["gen_id"])
+    idx = int(request.match_info["idx"])
+    body = await _json_body(request)
+    if body is None:
+        return _err("بدنه‌ی درخواست نامعتبره.")
+    new_name = (body.get("name") or "").strip()
+    if not new_name:
+        return _err("اسم جدید اجباریه.")
+    gen = storage.get_generated_by_id(gen_id, request["user_id"])
+    if not gen:
+        return _err("پیدا نشد.", 404)
+    # اول لایو کن تا ایندکس با لیست فعلی یکی باشه
+    storage.resolve_generated_configs(gen, persist=True)
+    remark = storage.rename_config_in_generated(gen_id, request["user_id"], idx, new_name)
+    if remark is None:
+        return _err("ایندکس نامعتبره.", 400)
+    gen = storage.get_generated_by_id(gen_id, request["user_id"])
+    live = storage.resolve_generated_configs(gen, persist=True)
+    data = _gen_summary(gen, request)
+    data["config_count"] = len(live)
+    data["configs"] = [_config_summary(i, c) for i, c in enumerate(live)]
+    data["renamed"] = remark
+    return web.json_response(data)
+
+
+async def api_delete_gen_config(request: web.Request) -> web.Response:
+    gen_id = int(request.match_info["gen_id"])
+    idx = int(request.match_info["idx"])
+    gen = storage.get_generated_by_id(gen_id, request["user_id"])
+    if not gen:
+        return _err("پیدا نشد.", 404)
+    storage.resolve_generated_configs(gen, persist=True)
+    total = storage.delete_config_from_generated(gen_id, request["user_id"], idx)
+    if total is None:
+        return _err("ایندکس نامعتبره.", 400)
+    gen = storage.get_generated_by_id(gen_id, request["user_id"])
+    live = storage.resolve_generated_configs(gen, persist=True) if gen else []
+    data = _gen_summary(gen, request) if gen else {"id": gen_id, "config_count": 0}
+    data["config_count"] = len(live)
+    data["configs"] = [_config_summary(i, c) for i, c in enumerate(live)]
+    data["deleted_index"] = idx
+    return web.json_response(data)
+
+
 async def api_delete_generated(request: web.Request) -> web.Response:
     gen_id = int(request.match_info["gen_id"])
     if not storage.get_generated_by_id(gen_id, request["user_id"]):
@@ -417,4 +463,6 @@ def add_routes(app: web.Application) -> None:
     app.router.add_get("/api/generated", api_list_generated)
     app.router.add_get("/api/generated/{gen_id}", api_get_generated)
     app.router.add_post("/api/generated/{gen_id}/add-configs", api_add_to_generated)
+    app.router.add_post("/api/generated/{gen_id}/configs/{idx}/rename", api_rename_gen_config)
+    app.router.add_delete("/api/generated/{gen_id}/configs/{idx}", api_delete_gen_config)
     app.router.add_delete("/api/generated/{gen_id}", api_delete_generated)
