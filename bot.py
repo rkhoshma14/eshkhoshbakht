@@ -1,10 +1,12 @@
 import asyncio
+import io
 import logging
 import os
 from datetime import datetime, timedelta, timezone
 from html import escape
 
 import httpx
+import qrcode
 from aiohttp import web
 
 import auth
@@ -16,6 +18,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
+    BufferedInputFile,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -303,6 +306,7 @@ def build_gen_detail_keyboard(gen_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📋 مدیریت کانفیگ‌ها", callback_data=f"gen_cfgs:{gen_id}:0")],
+            [InlineKeyboardButton(text="📱 نمایش QR Code", callback_data=f"gen_qr:{gen_id}")],
             [InlineKeyboardButton(text="➕ افزودن کانفیگ از یک اشتراک دیگه", callback_data=f"gen_add:{gen_id}")],
             [
                 InlineKeyboardButton(text="⏰ تغییر انقضا", callback_data=f"gen_expiry:{gen_id}"),
@@ -460,7 +464,44 @@ def make_public_url(token: str, request_host: str | None = None) -> str:
         scheme = "https"
         return f"{scheme}://{request_host}/sub/{token}"
     # fallback
-    return f"/sub/{token}"# ===================== HTTP Server (برای سرو سابسکریپشن) =====================
+    return f"/sub/{token}"
+
+
+def make_qr_png(data: str, box_size: int = 8) -> bytes:
+    """تولید تصویر PNG کد QR از یک رشته (معمولاً لینک ساب)."""
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=box_size,
+        border=2,
+    )
+    qr.add_data(data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def send_sub_qr(message_or_cb_message, url: str, title: str = "") -> None:
+    """ارسال عکس QR لینک اشتراک به چت."""
+    try:
+        png = make_qr_png(url)
+        photo = BufferedInputFile(png, filename="qr.png")
+        caption = f"📱 کد QR"
+        if title:
+            caption = f"📱 کد QR — {title}"
+        caption += f"\n\n<code>{escape(url)}</code>"
+        await message_or_cb_message.answer_photo(photo, caption=caption, parse_mode="HTML")
+    except Exception as e:
+        logger.warning(f"send QR failed: {e}")
+        await message_or_cb_message.answer(
+            f"نتونستم QR بسازم.\nلینک:\n<code>{escape(url)}</code>",
+            parse_mode="HTML",
+        )
+
+
+# ===================== HTTP Server (برای سرو سابسکریپشن) =====================
 
 def _wants_html(request: web.Request) -> bool:
     """اگر درخواست از مرورگر باشه True، وگرنه (کلاینت VPN) False."""
@@ -1246,6 +1287,7 @@ async def finish_custom_with_expiry(callback: CallbackQuery, state: FSMContext):
             "این لینک رو می‌تونی مستقیم توی کلاینت‌ها اضافه کنی."
         )
     else:
+        url = f"/sub/{token}"
         msg = (
             f"✅ اشتراک سفارشی «{escape(name)}» ساخته شد.\n"
             f"📦 {len(renamed)} کانفیگ · ⏰ {exp_txt}\n\n"
@@ -1254,7 +1296,12 @@ async def finish_custom_with_expiry(callback: CallbackQuery, state: FSMContext):
         )
 
     await callback.message.edit_text(msg, parse_mode="HTML")
-    await callback.message.answer("منوی اصلی:", reply_markup=main_menu())
+    if BASE_URL:
+        await send_sub_qr(callback.message, url, title=name)
+    await callback.message.answer(
+        "منوی اصلی:",
+        reply_markup=main_menu(),
+    )
     await callback.answer("ساخته شد ✅")
 
 
@@ -1596,6 +1643,19 @@ async def open_generated(callback: CallbackQuery):
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+@dp.callback_query(F.data.regexp(r"^gen_qr:\d+$"))
+async def send_generated_qr(callback: CallbackQuery):
+    gen_id = int(callback.data.split(":")[1])
+    g = storage.get_generated_by_id(gen_id, callback.from_user.id)
+    if not g:
+        return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+    if not BASE_URL:
+        return await callback.answer("BASE_URL ست نشده — لینک کامل ساخته نمی‌شود.", show_alert=True)
+    url = make_public_url(g["token"])
+    await callback.answer()
+    await send_sub_qr(callback.message, url, title=g["name"])
 
 
 @dp.callback_query(F.data.regexp(r"^gen_cfgs:\d+:\d+$"))

@@ -868,6 +868,16 @@ function renderGenDetail(gen) {
     app.querySelectorAll("[data-gen-del]").forEach((btn) => {
       btn.addEventListener("click", () => confirmDeleteGenConfig(gen, parseInt(btn.dataset.genDel)));
     });
+    // رندر QR لینک اشتراک
+    try {
+      const wrap = document.getElementById("gen-qr-wrap");
+      if (wrap && gen.url && typeof qrcode === "function") {
+        const qr = qrcode(0, "M");
+        qr.addData(gen.url);
+        qr.make();
+        wrap.innerHTML = qr.createSvgTag({ cellSize: 5, margin: 2 });
+      }
+    } catch (e) { /* qrcode.js در دسترس نیست */ }
   }, 0);
 
   const expLabel = gen.expires_at
@@ -898,6 +908,11 @@ function renderGenDetail(gen) {
         <button class="btn-sm btn" id="change-expiry-btn">⏰ تغییر انقضا</button>
         <button class="btn-sm btn" id="edit-gen-note-btn">📝 یادداشت</button>
         <button class="btn" id="add-to-gen-btn">${icon("plus", "icon-sm")} افزودن کانفیگ از اشتراک دیگر</button>
+      </div>
+      <div class="qr-box" style="margin-top:16px;text-align:center">
+        <div class="detail-meta" style="margin-bottom:8px">📱 کد QR</div>
+        <div id="gen-qr-wrap" style="display:inline-block;padding:12px;background:#fff;border-radius:12px"></div>
+        <div class="detail-meta" style="margin-top:8px;font-size:.8rem">با اسکن این کد، اشتراک مستقیم اضافه می‌شود</div>
       </div>
     </div>
     <div class="card">${rows || '<div class="empty-state">کانفیگی نیست.</div>'}</div>
