@@ -321,11 +321,31 @@ async def api_list_generated(request: web.Request) -> web.Response:
     return web.json_response([_gen_summary(g, request) for g in gens])
 
 
+async def _refresh_source_subs_for_gen(gen: dict) -> None:
+    """لینک‌های منبع را از اینترنت دوباره می‌گیرد تا resolve لایو باشد."""
+    if not gen.get("items"):
+        return
+    user_id = gen.get("user_id")
+    if user_id is None:
+        return
+    for sub_id in storage.get_source_sub_ids(gen):
+        sub = storage.get_sub(sub_id, user_id)
+        if not sub or not sub.get("sub_url"):
+            continue
+        ok, result = await _fetch_configs(sub["sub_url"])
+        if ok and isinstance(result, list):
+            storage.update_configs(sub_id, user_id, result)
+
+
 async def api_get_generated(request: web.Request) -> web.Response:
     gen_id = int(request.match_info["gen_id"])
     gen = storage.get_generated_by_id(gen_id, request["user_id"])
     if not gen:
         return _err("پیدا نشد.", 404)
+    try:
+        await _refresh_source_subs_for_gen(gen)
+    except Exception:
+        pass
     live = storage.resolve_generated_configs(gen, persist=True)
     data = _gen_summary(gen, request)
     data["config_count"] = len(live)

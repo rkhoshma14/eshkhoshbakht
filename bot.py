@@ -693,6 +693,22 @@ def _sub_userinfo(gen: dict) -> str:
     return f"upload=0; download=0; total=0; expire={expire}"
 
 
+async def refresh_source_subs_for_gen(gen: dict) -> None:
+    """قبل از resolve، لینک‌های منبع را از اینترنت دوباره می‌گیرد تا کانفیگ‌ها لایو باشند."""
+    if not gen.get("items"):
+        return
+    user_id = gen.get("user_id")
+    if user_id is None:
+        return
+    for sub_id in storage.get_source_sub_ids(gen):
+        sub = storage.get_sub(sub_id, user_id)
+        if not sub or not sub.get("sub_url"):
+            continue
+        ok, result = await fetch_configs(sub["sub_url"])
+        if ok and isinstance(result, list):
+            storage.update_configs(sub_id, user_id, result)
+
+
 async def handle_sub(request: web.Request) -> web.Response:
     # پاک‌سازی خودکار اشتراک‌های منقضی‌شدهٔ قدیمی (بیش از ۷ روز)
     try:
@@ -712,7 +728,11 @@ async def handle_sub(request: web.Request) -> web.Response:
         # وقتی منقضی شد: فقط کانفیگ فیک «منقضی شده» باقی می‌ماند و بقیه پاک می‌شوند
         live_configs = [info_cfg]
     else:
-        # لایوآپدیت: اگر recipe (items) ذخیره شده باشد، از منابع فعلی می‌سازد
+        # ۱) ری‌فچ منابع از اینترنت  ۲) ساخت کانفیگ‌های لایو از روی recipe
+        try:
+            await refresh_source_subs_for_gen(gen)
+        except Exception as e:
+            logger.warning(f"refresh sources failed for token={token}: {e}")
         live_configs = storage.resolve_generated_configs(gen, persist=True)
         # اضافه کردن کانفیگ فیک در ابتدای لیست
         live_configs = [info_cfg] + live_configs
@@ -1562,13 +1582,20 @@ async def open_generated(callback: CallbackQuery):
     if not g:
         return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
 
+    # همگام‌سازی لایو با منابع
+    try:
+        await refresh_source_subs_for_gen(g)
+        storage.resolve_generated_configs(g, persist=True)
+        g = storage.get_generated_by_id(gen_id, callback.from_user.id) or g
+    except Exception:
+        pass
+
     await callback.message.edit_text(
         gen_detail_text(g),
         reply_markup=build_gen_detail_keyboard(gen_id),
         parse_mode="HTML",
     )
     await callback.answer()
-
 
 
 @dp.callback_query(F.data.regexp(r"^gen_cfgs:\d+:\d+$"))
@@ -1578,6 +1605,10 @@ async def gen_list_configs(callback: CallbackQuery):
     g = storage.get_generated_by_id(gen_id, callback.from_user.id)
     if not g:
         return await callback.answer("این اشتراک پیدا نشد.", show_alert=True)
+    try:
+        await refresh_source_subs_for_gen(g)
+    except Exception:
+        pass
     configs = storage.resolve_generated_configs(g, persist=True)
     if not configs:
         return await callback.answer("کانفیگی نیست.", show_alert=True)

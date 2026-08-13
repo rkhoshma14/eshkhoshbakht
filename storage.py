@@ -402,50 +402,61 @@ def add_configs_to_generated(
     return len(existing)
 
 
-def _resolve_one_item(item: dict, user_id: int, subs_cache: dict) -> str | None:
-    """یک آیتم منبع را به کانفیگ خام فعلی تبدیل می‌کند."""
+def _resolve_one_item(item: dict, user_id: int, subs_cache: dict) -> tuple[str | None, str | None]:
+    """یک آیتم منبع را به کانفیگ خام فعلی تبدیل می‌کند.
+    خروجی: (raw_config_or_None, new_fingerprint_or_None)
+    اولویت تطبیق:
+      ۱) اثرانگشت (fp) — دقیق‌ترین
+      ۲) ایندکس — اگر fp عوض شده باشد (مثلاً آدرس سرور تغییر کرده)
+    اگر name خالی باشد، remark فعلی منبع حفظ می‌شود (لایو).
+    اگر name پر باشد، همان اسم سفارشی ادمین اعمال می‌شود.
+    """
     from config_parser import config_fingerprint, rename_config
 
     try:
         sub_id = int(item["sub_id"])
     except (KeyError, TypeError, ValueError):
-        return None
+        return None, None
 
     sub = subs_cache.get(sub_id)
     if sub is None:
         sub = get_sub(sub_id, user_id)
         if not sub:
-            return None
+            return None, None
         subs_cache[sub_id] = sub
 
     configs = sub.get("configs") or []
     fp = item.get("fp") or ""
     idx = item.get("index")
     raw = None
+    new_fp = None
 
-    if isinstance(idx, int) and 0 <= idx < len(configs):
-        cand = configs[idx]
-        if not fp or config_fingerprint(cand) == fp:
-            raw = cand
-
-    if raw is None and fp:
+    # ۱) جستجو با اثرانگشت
+    if fp:
         for cand in configs:
             if config_fingerprint(cand) == fp:
                 raw = cand
+                new_fp = fp
                 break
 
+    # ۲) اگر پیدا نشد، از ایندکس استفاده کن (کانفیگ جابه‌جا یا آدرس عوض شده)
+    if raw is None and isinstance(idx, int) and 0 <= idx < len(configs):
+        raw = configs[idx]
+        new_fp = config_fingerprint(raw)
+
     if raw is None:
-        return None
+        return None, None
 
     custom_name = (item.get("name") or "").strip()
     if custom_name:
         raw = rename_config(raw, custom_name)
-    return raw
+    return raw, new_fp
 
 
 def resolve_generated_configs(gen: dict, persist: bool = True) -> list[str]:
-    """کانفیگ‌های لایو اشتراک سفارشی را از روی منابع می‌سازد.
+    """کانفیگ‌های لایو اشتراک سفارشی را از روی منابع فعلی می‌سازد.
     اگر items نباشد، همان snapshot ذخیره‌شده برمی‌گردد.
+    اثرانگشت‌های به‌روز شده هم در items ذخیره می‌شوند.
     """
     items = gen.get("items")
     snapshot = list(gen.get("configs") or [])
@@ -458,25 +469,56 @@ def resolve_generated_configs(gen: dict, persist: bool = True) -> list[str]:
 
     subs_cache: dict = {}
     resolved: list[str] = []
+    items_updated = False
+    new_items = list(items)
+
     for i, item in enumerate(items):
-        raw = _resolve_one_item(item, user_id, subs_cache)
+        raw, new_fp = _resolve_one_item(item, user_id, subs_cache)
         if raw is not None:
             resolved.append(raw)
+            # اگر اثرانگشت عوض شده، در recipe به‌روز کن تا دفعه بعد بهتر پیدا شود
+            if new_fp and new_fp != (item.get("fp") or ""):
+                new_items[i] = dict(item)
+                new_items[i]["fp"] = new_fp
+                items_updated = True
         elif i < len(snapshot):
             # منبع در دسترس نیست — آخرین نسخه ذخیره‌شده
             resolved.append(snapshot[i])
 
     if persist and resolved and gen.get("id") is not None:
         conn = _conn()
-        conn.execute(
-            "UPDATE generated_subs SET configs=? WHERE id=?",
-            (json.dumps(resolved), gen["id"]),
-        )
+        if items_updated:
+            conn.execute(
+                "UPDATE generated_subs SET configs=?, items=? WHERE id=?",
+                (json.dumps(resolved), json.dumps(new_items), gen["id"]),
+            )
+            gen["items"] = new_items
+        else:
+            conn.execute(
+                "UPDATE generated_subs SET configs=? WHERE id=?",
+                (json.dumps(resolved), gen["id"]),
+            )
         conn.commit()
         conn.close()
         gen["configs"] = resolved
 
     return resolved
+
+
+def get_source_sub_ids(gen: dict) -> list[int]:
+    """لیست یکتای sub_id های منبع برای یک اشتراک سفارشی."""
+    items = gen.get("items") or []
+    ids = []
+    seen = set()
+    for it in items:
+        try:
+            sid = int(it["sub_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if sid not in seen and sid > 0:
+            seen.add(sid)
+            ids.append(sid)
+    return ids
 
 
 
