@@ -3,6 +3,7 @@ REST API برای پنل وب. همه‌ی مسیرها نیازمند سشن م
 هر endpoint دقیقاً همون کاری رو می‌کنه که معادلش تو ربات تلگرام انجام میده،
 و روی همون storage.py مشترک کار می‌کنه (دیتای یکسان بین ربات و پنل).
 """
+import json
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -506,6 +507,51 @@ async def api_update_generated_note(request: web.Request) -> web.Response:
     return web.json_response(_gen_summary(gen, request))
 
 
+async def api_backup_export(request: web.Request) -> web.Response:
+    """دانلود بک‌آپ کامل JSON برای جابه‌جایی سرور (توکن‌ها حفظ می‌شوند)."""
+    data = storage.export_full_backup()
+    body = json.dumps(data, ensure_ascii=False, indent=2)
+    filename = f"eshkhoshbakht-backup-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.json"
+    return web.Response(
+        text=body,
+        content_type="application/json",
+        charset="utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+async def api_backup_restore(request: web.Request) -> web.Response:
+    """
+    بازیابی بک‌آپ کامل.
+    body: خود JSON بک‌آپ  یا  { "backup": {...}, "replace": true }
+    replace پیش‌فرض true است (جایگزینی کامل — مناسب مهاجرت).
+    """
+    body = await _json_body(request)
+    if body is None:
+        return _err("بدنه‌ی درخواست نامعتبره.")
+
+    if "backup" in body and isinstance(body.get("backup"), dict):
+        data = body["backup"]
+        replace = bool(body.get("replace", True))
+    elif body.get("type") == "eshkhoshbakht_full_backup" or ("subs" in body and "generated_subs" in body):
+        data = body
+        replace = True
+    else:
+        return _err("فرمت بک‌آپ شناخته نشد.")
+
+    try:
+        result = storage.import_full_backup(data, replace=replace)
+    except ValueError as e:
+        return _err(str(e))
+    except Exception as e:
+        return _err(f"خطا در بازیابی: {e}", 500)
+
+    return web.json_response({"ok": True, **result})
+
+
 def add_routes(app: web.Application) -> None:
     app.router.add_get("/api/subs", api_list_subs)
     app.router.add_post("/api/subs", api_add_sub)
@@ -526,3 +572,5 @@ def add_routes(app: web.Application) -> None:
     app.router.add_post("/api/generated/{gen_id}/expiry", api_update_generated_expiry)
     app.router.add_post("/api/generated/{gen_id}/note", api_update_generated_note)
     app.router.add_delete("/api/generated/{gen_id}", api_delete_generated)
+    app.router.add_get("/api/backup", api_backup_export)
+    app.router.add_post("/api/backup/restore", api_backup_restore)

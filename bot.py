@@ -1,5 +1,6 @@
 import asyncio
 import io
+import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -56,6 +57,7 @@ BTN_ADD_SUB = "➕ افزودن اشتراک"
 BTN_LIST = "📋 لیست اشتراک‌ها"
 BTN_MY_GENERATED = "🛠 اشتراک‌های من"
 BTN_MULTI_BUILD = "🌐 ساخت از چند منبع"
+BTN_BACKUP = "💾 بک‌آپ / بازیابی"
 BTN_NOTE_SKIP = "بدون یادداشت"
 BTN_BACK = "« بازگشت به اشتراک‌ها"
 BTN_REFRESH = "🔄 بروزرسانی"
@@ -90,6 +92,10 @@ class GenEditState(StatesGroup):
     waiting_note = State()
 
 
+class BackupState(StatesGroup):
+    waiting_restore_file = State()
+
+
 class BuildCustomState(StatesGroup):
     selecting = State()          # انتخاب کانفیگ‌ها (تک‌منبع یا چندمنبع)
     selecting_sources = State()  # انتخاب چند اشتراک منبع
@@ -98,7 +104,7 @@ class BuildCustomState(StatesGroup):
     waiting_expiry = State()     # انتخاب تاریخ انقضا
 
 
-MENU_BUTTONS = {BTN_ADD_SUB, BTN_LIST, BTN_MY_GENERATED, BTN_MULTI_BUILD}
+MENU_BUTTONS = {BTN_ADD_SUB, BTN_LIST, BTN_MY_GENERATED, BTN_MULTI_BUILD, BTN_BACKUP}
 
 
 async def bail_if_menu_button(message: Message, state: FSMContext) -> bool:
@@ -113,6 +119,8 @@ async def bail_if_menu_button(message: Message, state: FSMContext) -> bool:
         await list_my_generated(message)
     elif message.text == BTN_MULTI_BUILD:
         await start_multi_build(message, state)
+    elif message.text == BTN_BACKUP:
+        await show_backup_menu(message, state)
     return True
 
 
@@ -123,8 +131,8 @@ def is_admin(user_id: int) -> bool:
 def main_menu() -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text=BTN_ADD_SUB), KeyboardButton(text=BTN_MULTI_BUILD)],
-        [KeyboardButton(text=BTN_LIST)],
-        [KeyboardButton(text=BTN_MY_GENERATED)],
+        [KeyboardButton(text=BTN_LIST), KeyboardButton(text=BTN_MY_GENERATED)],
+        [KeyboardButton(text=BTN_BACKUP)],
     ]
     if BASE_URL:
         rows.append([KeyboardButton(text=BTN_OPEN_PANEL, web_app=WebAppInfo(url=f"{BASE_URL}/panel"))])
@@ -2213,6 +2221,118 @@ async def do_rename(message: Message, state: FSMContext):
     renamed = rename_config(sub["configs"][idx], new_name)
     await message.answer(f"<code>{escape(renamed)}</code>", parse_mode="HTML")
     await state.clear()
+
+
+# ---------- بک‌آپ / بازیابی ----------
+
+async def show_backup_menu(message: Message, state: FSMContext | None = None):
+    if state:
+        await state.clear()
+    data = storage.export_full_backup()
+    stats = data.get("stats") or {}
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📥 دانلود بک‌آپ کامل", callback_data="backup_download")],
+            [InlineKeyboardButton(text="📤 بازیابی از فایل JSON", callback_data="backup_restore")],
+        ]
+    )
+    await message.answer(
+        "💾 <b>بک‌آپ و جابه‌جایی سرور</b>\n\n"
+        f"📦 اشتراک اصلی: <b>{stats.get('subs_count', 0)}</b>\n"
+        f"🛠 اشتراک سفارشی: <b>{stats.get('generated_count', 0)}</b>\n"
+        f"🔗 کانفیگ‌های سفارشی: <b>{stats.get('generated_configs', 0)}</b>\n\n"
+        "با دانلود بک‌آپ، همه چیز (از جمله <b>توکن لینک‌های سفارشی</b>) ذخیره می‌شود.\n"
+        "روی سرور جدید همان فایل را بازیابی کن و <code>BASE_URL</code> / دامنه را "
+        "مثل قبل ست کن تا لینک‌ها عوض نشوند.",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+
+
+@dp.message(F.text == BTN_BACKUP)
+async def backup_menu_msg(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return await message.answer("دسترسی نداری.")
+    await show_backup_menu(message, state)
+
+
+@dp.callback_query(F.data == "backup_download")
+async def backup_download(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("دسترسی نداری.", show_alert=True)
+    await callback.answer()
+    data = storage.export_full_backup()
+    body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    fname = f"eshkhoshbakht-backup-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.json"
+    doc = BufferedInputFile(body, filename=fname)
+    stats = data.get("stats") or {}
+    await callback.message.answer_document(
+        doc,
+        caption=(
+            f"✅ بک‌آپ آماده است.\n"
+            f"📦 {stats.get('subs_count', 0)} اشتراک · "
+            f"🛠 {stats.get('generated_count', 0)} سفارشی\n\n"
+            "این فایل را جای امن نگه دار. برای جابه‌جایی سرور، روی پنل/ربات جدید بازیابی کن."
+        ),
+    )
+
+
+@dp.callback_query(F.data == "backup_restore")
+async def backup_restore_ask(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return await callback.answer("دسترسی نداری.", show_alert=True)
+    await state.set_state(BackupState.waiting_restore_file)
+    await callback.message.answer(
+        "📤 فایل JSON بک‌آپ را به صورت <b>سند (Document)</b> بفرست.\n\n"
+        "⚠️ بازیابی، داده‌های فعلی این سرور را <b>جایگزین</b> می‌کند.\n"
+        "توکن‌های لینک سفارشی از بک‌آپ حفظ می‌شوند.",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@dp.message(BackupState.waiting_restore_file, F.document)
+async def backup_restore_file(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear()
+        return await message.answer("دسترسی نداری.")
+    doc = message.document
+    if not doc:
+        return await message.answer("یک فایل JSON بفرست.")
+    name = (doc.file_name or "").lower()
+    if name and not (name.endswith(".json") or name.endswith(".txt")):
+        return await message.answer("فایل باید JSON باشد.")
+
+    try:
+        file = await bot.get_file(doc.file_id)
+        buf = io.BytesIO()
+        await bot.download_file(file.file_path, buf)
+        raw = buf.getvalue().decode("utf-8")
+        data = json.loads(raw)
+        result = storage.import_full_backup(data, replace=True)
+        await state.clear()
+        await message.answer(
+            "✅ بازیابی انجام شد.\n\n"
+            f"📦 اشتراک اصلی: {result.get('subs_restored', 0)}\n"
+            f"🛠 اشتراک سفارشی: {result.get('generated_restored', 0)}\n"
+            f"🔑 توکن حفظ‌شده: {result.get('tokens_preserved', 0)}\n\n"
+            "اگر دامنه/`BASE_URL` مثل سرور قبلی باشد، لینک‌های مشتریان همان قبلی می‌ماند.",
+            reply_markup=main_menu(),
+        )
+    except json.JSONDecodeError:
+        await message.answer("فایل JSON معتبر نیست. دوباره بفرست یا /start بزن.")
+    except ValueError as e:
+        await message.answer(f"خطا: {escape(str(e))}", parse_mode="HTML")
+    except Exception as e:
+        logger.exception("backup restore failed")
+        await message.answer(f"خطا در بازیابی: {escape(str(e))}", parse_mode="HTML")
+
+
+@dp.message(BackupState.waiting_restore_file)
+async def backup_restore_need_doc(message: Message, state: FSMContext):
+    if await bail_if_menu_button(message, state):
+        return
+    await message.answer("لطفاً فایل بک‌آپ را به صورت سند (Document) بفرست، نه متن.")
 
 
 # ===================== Main =====================

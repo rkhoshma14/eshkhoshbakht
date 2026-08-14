@@ -282,6 +282,12 @@ function renderOverview() {
     });
     const addBtn = document.getElementById("overview-add-btn");
     if (addBtn) addBtn.addEventListener("click", openAddSubModal);
+    const dlBtn = document.getElementById("backup-download-btn");
+    if (dlBtn) dlBtn.addEventListener("click", downloadBackup);
+    const restBtn = document.getElementById("backup-restore-btn");
+    if (restBtn) restBtn.addEventListener("click", () => document.getElementById("backup-file-input").click());
+    const fileInput = document.getElementById("backup-file-input");
+    if (fileInput) fileInput.addEventListener("change", onBackupFileSelected);
   });
 
   return `
@@ -314,7 +320,64 @@ function renderOverview() {
       <div class="card-header"><div class="detail-title" style="font-size:.95rem">آخرین اشتراک‌ها</div></div>
       ${recentHtml}
     </div>
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="detail-title" style="font-size:.95rem">💾 بک‌آپ و جابه‌جایی سرور</div>
+          <div class="detail-meta">توکن لینک‌های سفارشی حفظ می‌شود؛ روی سرور جدید همان دامنه/BASE_URL را ست کن.</div>
+        </div>
+      </div>
+      <div class="action-bar">
+        <button class="btn" id="backup-download-btn">📥 دانلود بک‌آپ</button>
+        <button class="btn-outline btn" id="backup-restore-btn">📤 بازیابی از فایل</button>
+      </div>
+      <input type="file" id="backup-file-input" accept="application/json,.json" style="display:none"/>
+    </div>
   `;
+}
+
+async function downloadBackup() {
+  try {
+    toast("در حال آماده‌سازی بک‌آپ...");
+    const res = await fetch("/api/backup", { credentials: "same-origin" });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "خطا در دانلود بک‌آپ");
+    }
+    const blob = await res.blob();
+    const disp = res.headers.get("Content-Disposition") || "";
+    const m = /filename=\"?([^\";]+)\"?/.exec(disp);
+    const filename = m ? m[1] : `eshkhoshbakht-backup-${Date.now()}.json`;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+    toast("بک‌آپ دانلود شد");
+  } catch (e) {
+    toast(e.message || "خطا", true);
+  }
+}
+
+async function onBackupFileSelected(ev) {
+  const file = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!file) return;
+  if (!confirm("بازیابی، همه داده‌های فعلی این سرور را جایگزین می‌کند. مطمئنی؟")) return;
+  try {
+    toast("در حال بازیابی...");
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const result = await api("POST", "/api/backup/restore", data);
+    toast(`بازیابی شد: ${result.subs_restored || 0} اشتراک · ${result.generated_restored || 0} سفارشی`);
+    state.subs = await api("GET", "/api/subs");
+    await loadGenerated();
+    render();
+  } catch (e) {
+    toast(e.message || "خطا در بازیابی", true);
+  }
 }
 
 // ================= تب اشتراک‌ها =================

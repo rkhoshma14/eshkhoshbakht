@@ -586,3 +586,205 @@ def rename_config_in_generated(gen_id: int, user_id: int, idx: int, new_name: st
     conn.commit()
     conn.close()
     return get_remark(configs[idx]) or new_name
+
+
+# ---------- بک‌آپ / بازیابی (جابه‌جایی سرور) ----------
+
+BACKUP_VERSION = 1
+
+
+def export_full_backup() -> dict:
+    """
+    خروجی کامل دیتابیس برای جابه‌جایی به سرور جدید.
+    توکن‌ها و id ها حفظ می‌شوند تا لینک /sub/TOKEN همان بماند.
+    """
+    conn = _conn()
+    subs_rows = conn.execute(
+        "SELECT id, user_id, name, note, sub_url, configs, updated_at FROM subs ORDER BY id"
+    ).fetchall()
+    gen_rows = conn.execute(
+        "SELECT id, user_id, name, token, configs, created_at, expires_at, items, note FROM generated_subs ORDER BY id"
+    ).fetchall()
+    conn.close()
+
+    subs = []
+    for row in subs_rows:
+        sid, user_id, name, note, sub_url, configs_json, updated_at = row
+        subs.append(
+            {
+                "id": sid,
+                "user_id": user_id,
+                "name": name,
+                "note": note or "",
+                "sub_url": sub_url,
+                "configs": json.loads(configs_json),
+                "updated_at": updated_at or "",
+            }
+        )
+
+    generated = []
+    for row in gen_rows:
+        gid, user_id, name, token, configs_json, created_at, expires_at, items_json, note = (
+            row[0], row[1], row[2], row[3], row[4], row[5], row[6],
+            row[7] if len(row) > 7 else None,
+            row[8] if len(row) > 8 else "",
+        )
+        items = None
+        if items_json:
+            try:
+                items = json.loads(items_json)
+            except Exception:
+                items = None
+        generated.append(
+            {
+                "id": gid,
+                "user_id": user_id,
+                "name": name,
+                "token": token,
+                "configs": json.loads(configs_json),
+                "created_at": created_at,
+                "expires_at": expires_at,
+                "items": items,
+                "note": note or "",
+            }
+        )
+
+    return {
+        "version": BACKUP_VERSION,
+        "type": "eshkhoshbakht_full_backup",
+        "exported_at": _now_iso(),
+        "subs": subs,
+        "generated_subs": generated,
+        "stats": {
+            "subs_count": len(subs),
+            "generated_count": len(generated),
+            "total_configs": sum(len(s["configs"]) for s in subs),
+            "generated_configs": sum(len(g["configs"]) for g in generated),
+        },
+    }
+
+
+def import_full_backup(data: dict, replace: bool = True) -> dict:
+    """
+    بازیابی بک‌آپ کامل.
+    replace=True: همه داده فعلی پاک و با بک‌آپ جایگزین می‌شود (مناسب جابه‌جایی سرور).
+    id و token ها دقیقاً مثل بک‌آپ نوشته می‌شوند تا لینک‌ها و ارجاع items درست بمانند.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("فایل بک‌آپ نامعتبر است.")
+    if data.get("type") and data.get("type") != "eshkhoshbakht_full_backup":
+        raise ValueError("این فایل بک‌آپ خوشبخت نیست.")
+    if "subs" not in data or "generated_subs" not in data:
+        raise ValueError("فایل بک‌آپ ناقص است (subs یا generated_subs نیست).")
+
+    subs = data.get("subs") or []
+    gens = data.get("generated_subs") or []
+    if not isinstance(subs, list) or not isinstance(gens, list):
+        raise ValueError("ساختار بک‌آپ نامعتبر است.")
+
+    conn = _conn()
+    try:
+        if replace:
+            conn.execute("DELETE FROM generated_subs")
+            conn.execute("DELETE FROM subs")
+            conn.commit()
+
+        for s in subs:
+            configs = s.get("configs") or []
+            if not isinstance(configs, list):
+                configs = []
+            sid = s.get("id")
+            if sid is not None and replace:
+                conn.execute(
+                    "INSERT INTO subs (id, user_id, name, note, sub_url, configs, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        int(sid),
+                        int(s["user_id"]),
+                        s.get("name") or "بدون نام",
+                        s.get("note") or "",
+                        s.get("sub_url") or "",
+                        json.dumps(configs),
+                        s.get("updated_at") or _now_iso(),
+                    ),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO subs (user_id, name, note, sub_url, configs, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        int(s["user_id"]),
+                        s.get("name") or "بدون نام",
+                        s.get("note") or "",
+                        s.get("sub_url") or "",
+                        json.dumps(configs),
+                        s.get("updated_at") or _now_iso(),
+                    ),
+                )
+
+        for g in gens:
+            configs = g.get("configs") or []
+            if not isinstance(configs, list):
+                configs = []
+            token = (g.get("token") or "").strip()
+            if not token:
+                token = secrets.token_urlsafe(16)
+            items = g.get("items")
+            items_json = json.dumps(items) if items is not None else None
+            gid = g.get("id")
+            if gid is not None and replace:
+                conn.execute(
+                    "INSERT INTO generated_subs (id, user_id, name, token, configs, created_at, expires_at, items, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        int(gid),
+                        int(g["user_id"]),
+                        g.get("name") or "بدون نام",
+                        token,
+                        json.dumps(configs),
+                        g.get("created_at") or _now_iso(),
+                        g.get("expires_at"),
+                        items_json,
+                        g.get("note") or "",
+                    ),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO generated_subs (user_id, name, token, configs, created_at, expires_at, items, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        int(g["user_id"]),
+                        g.get("name") or "بدون نام",
+                        token,
+                        json.dumps(configs),
+                        g.get("created_at") or _now_iso(),
+                        g.get("expires_at"),
+                        items_json,
+                        g.get("note") or "",
+                    ),
+                )
+
+        # به‌روز کردن sequence برای جلوگیری از تداخل id های بعدی
+        max_sub = conn.execute("SELECT COALESCE(MAX(id), 0) FROM subs").fetchone()[0]
+        max_gen = conn.execute("SELECT COALESCE(MAX(id), 0) FROM generated_subs").fetchone()[0]
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO sqlite_sequence(name, seq) VALUES ('subs', ?)",
+                (max_sub,),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO sqlite_sequence(name, seq) VALUES ('generated_subs', ?)",
+                (max_gen,),
+            )
+        except Exception:
+            # جدول sqlite_sequence ممکن است هنوز نباشد
+            pass
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    return {
+        "subs_restored": len(subs),
+        "generated_restored": len(gens),
+        "tokens_preserved": sum(1 for g in gens if (g.get("token") or "").strip()),
+    }
