@@ -96,6 +96,9 @@ def _conn():
 
 
 def add_sub(user_id: int, name: str, note: str, sub_url: str, configs: list[str]) -> int:
+    from config_parser import disambiguate_duplicates
+
+    configs = disambiguate_duplicates(configs)
     conn = _conn()
     cur = conn.execute(
         "INSERT INTO subs (user_id, name, note, sub_url, configs, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -151,6 +154,9 @@ def get_sub(sub_id: int, user_id: int) -> dict | None:
 
 
 def update_configs(sub_id: int, user_id: int, configs: list[str]) -> None:
+    from config_parser import disambiguate_duplicates
+
+    configs = disambiguate_duplicates(configs)
     conn = _conn()
     conn.execute(
         "UPDATE subs SET configs=?, updated_at=? WHERE id=? AND user_id=?",
@@ -189,6 +195,9 @@ def create_generated_sub(
     note: str = "",
 ) -> tuple[int, str]:
     """items: لیست منبع برای لایوآپدیت — [{"sub_id", "index", "name", "fp"}, ...]"""
+    from config_parser import disambiguate_duplicates
+
+    configs = disambiguate_duplicates(configs)
     token = secrets.token_urlsafe(16)
     conn = _conn()
     cur = conn.execute(
@@ -383,6 +392,8 @@ def add_configs_to_generated(
         return None
     existing = json.loads(row[0])
     existing.extend(new_configs)
+    from config_parser import disambiguate_duplicates
+    existing = disambiguate_duplicates(existing)
     items = None
     if row[1]:
         try:

@@ -159,3 +159,78 @@ def make_expiry_info_config(expires_at: str | None) -> str:
         "vless://00000000-0000-0000-0000-000000000000@127.0.0.1:1"
         f"?encryption=none&security=none&type=tcp#{quote(remark)}"
     )
+
+
+# ---------- متمایزسازی کانفیگ‌های هم‌فینگرپرینت (بدون حذف) ----------
+
+
+def _split_query(raw: str) -> tuple[str, dict, str]:
+    """base (قبل از ?) ، دیکشنری پارامترهای query ، fragment (بعد از #) رو برمی‌گردونه."""
+    body, _, frag = raw.partition("#")
+    base, sep, query = body.partition("?")
+    params: dict[str, str] = {}
+    if sep:
+        for part in query.split("&"):
+            if not part:
+                continue
+            k, _, v = part.partition("=")
+            params[k] = v
+    return base, params, frag
+
+
+def _join_query(base: str, params: dict, frag: str) -> str:
+    query = "&".join(f"{k}={v}" for k, v in params.items())
+    result = f"{base}?{query}" if query else base
+    if frag:
+        result += f"#{frag}"
+    return result
+
+
+def _disambiguate_one(raw: str, salt: int) -> str:
+    """
+    یه کپی «تکنیکی یکسان» رو با یه فیلد بی‌اثر (که رو مسیر واقعی اتصال تأثیر نداره)
+    از بقیه متمایز می‌کنه، تا کلاینت اونا رو به‌جای یک نود، چند نود جدا ببینه.
+    remark (اسم) دست‌نخورده می‌مونه.
+    """
+    proto = get_protocol(raw)
+
+    if proto == "vmess":
+        try:
+            data = json.loads(_b64decode(raw[len("vmess://"):]))
+            # فیلد ناشناخته — کلاینت‌های vmess فیلدهای ناآشنا رو نادیده می‌گیرن، رو مسیر تأثیر نداره
+            data["_dd"] = salt
+            new_json = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+            new_b64 = base64.b64encode(new_json.encode("utf-8")).decode("utf-8")
+            return f"vmess://{new_b64}"
+        except Exception:
+            return raw
+
+    if "?" not in raw:
+        return raw
+
+    base, params, frag = _split_query(raw)
+    if params.get("security") == "reality":
+        # spx (spiderX) فقط رو ترافیک نمایشی reality اثر داره، نه رو تونل واقعی
+        params["spx"] = quote(f"/{salt}")
+    else:
+        params["_dd"] = str(salt)
+    return _join_query(base, params, frag)
+
+
+def disambiguate_duplicates(configs: list[str]) -> list[str]:
+    """
+    اگه چند کانفیگ فینگرپرینت یکسان داشته باشن (یعنی از نظر اتصال واقعاً یکی‌ان،
+    فقط اسمشون فرق داره)، نسخه‌های بعد از اولی رو با یه فیلد بی‌اثر متمایز می‌کنه
+    تا کلاینت همه‌شون رو جدا نشون بده. هیچ کانفیگی حذف نمی‌شه، ترتیب حفظ می‌شه.
+    """
+    seen: dict[str, int] = {}
+    result: list[str] = []
+    for raw in configs:
+        fp = config_fingerprint(raw)
+        count = seen.get(fp, 0)
+        seen[fp] = count + 1
+        if count == 0:
+            result.append(raw)
+        else:
+            result.append(_disambiguate_one(raw, count))
+    return result
