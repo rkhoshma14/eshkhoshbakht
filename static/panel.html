@@ -11,9 +11,29 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet"/>
-<link rel="stylesheet" href="/panel/static/style.css?v=20260819v3d"/>
+<link rel="stylesheet" href="/panel/static/style.css?v=20260819tunnel"/>
 </head>
 <body>
+<!-- 3D Tunnel / Network background (visual only) -->
+<div class="scene-3d" id="scene3d" aria-hidden="true">
+  <div class="scene-3d-inner" id="scene3dInner">
+    <div class="tunnel tunnel-1"></div>
+    <div class="tunnel tunnel-2"></div>
+    <div class="tunnel tunnel-3"></div>
+    <div class="tunnel tunnel-4"></div>
+    <div class="tunnel tunnel-5"></div>
+    <div class="net-grid"></div>
+    <div class="node n1"></div>
+    <div class="node n2"></div>
+    <div class="node n3"></div>
+    <div class="node n4"></div>
+    <div class="node n5"></div>
+    <div class="node n6"></div>
+    <div class="beam beam-1"></div>
+    <div class="beam beam-2"></div>
+  </div>
+</div>
+
 <div id="app" class="app-root">
   <div class="boot-spinner">
     <div class="boot-ring"></div>
@@ -22,6 +42,7 @@
 </div>
 <div class="toast" id="toast"></div>
 <script src="/panel/static/vendor/qrcode.js"></script>
-<script src="/panel/static/app.js?v=20260819v3d"></script>
+<script src="/panel/static/app.js?v=20260819tunnel"></script>
+<script src="/panel/static/scene3d.js?v=20260819tunnel"></script>
 </body>
 </html>

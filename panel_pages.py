@@ -74,9 +74,29 @@ def _login_html(error: str = "") -> str:
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet"/>
-<link rel="stylesheet" href="/panel/static/style.css?v=20260819v3d"/>
+<link rel="stylesheet" href="/panel/static/style.css?v=20260819tunnel"/>
 </head>
 <body class="login-body">
+<!-- 3D Tunnel background -->
+<div class="scene-3d" id="scene3d" aria-hidden="true">
+  <div class="scene-3d-inner" id="scene3dInner">
+    <div class="tunnel tunnel-1"></div>
+    <div class="tunnel tunnel-2"></div>
+    <div class="tunnel tunnel-3"></div>
+    <div class="tunnel tunnel-4"></div>
+    <div class="tunnel tunnel-5"></div>
+    <div class="net-grid"></div>
+    <div class="node n1"></div>
+    <div class="node n2"></div>
+    <div class="node n3"></div>
+    <div class="node n4"></div>
+    <div class="node n5"></div>
+    <div class="node n6"></div>
+    <div class="beam beam-1"></div>
+    <div class="beam beam-2"></div>
+  </div>
+</div>
+
   <div class="login-card">
     <div class="login-logo">{_LOGO_SVG}</div>
     <h1>خوشبخت</h1>
@@ -86,6 +106,7 @@ def _login_html(error: str = "") -> str:
     {password_form}
     {disabled_notice}
   </div>
+<script src="/panel/static/scene3d.js?v=20260819tunnel"></script>
 </body>
 </html>"""
 

@@ -749,3 +749,245 @@ code.url {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(212, 175, 55, 0.4);
 }
+
+/* ============================================================
+   3D Tunnel / Network Scene (product-relevant background)
+   Metaphor: VPN tunnel + proxy nodes
+   Visual only — does not affect layout or interactions
+   ============================================================ */
+
+.scene-3d {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  perspective: 900px;
+  perspective-origin: 50% 45%;
+}
+
+.scene-3d-inner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 140vmax;
+  height: 140vmax;
+  transform-style: preserve-3d;
+  transform: translate(-50%, -50%);
+  will-change: transform;
+}
+
+/* Tunnel rings — receding into depth */
+.tunnel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-radius: 50%;
+  border: 1.5px solid rgba(212, 175, 55, 0.18);
+  transform-style: preserve-3d;
+  box-shadow:
+    0 0 40px rgba(212, 175, 55, 0.06),
+    inset 0 0 30px rgba(45, 212, 191, 0.04);
+  animation: tunnel-spin 28s linear infinite;
+}
+
+.tunnel-1 {
+  width: 28vmin; height: 28vmin;
+  margin: -14vmin 0 0 -14vmin;
+  border-color: rgba(212, 175, 55, 0.28);
+  transform: translateZ(80px);
+  animation-duration: 22s;
+}
+.tunnel-2 {
+  width: 48vmin; height: 48vmin;
+  margin: -24vmin 0 0 -24vmin;
+  border-color: rgba(212, 175, 55, 0.16);
+  transform: translateZ(20px);
+  animation-duration: 32s;
+  animation-direction: reverse;
+}
+.tunnel-3 {
+  width: 72vmin; height: 72vmin;
+  margin: -36vmin 0 0 -36vmin;
+  border-color: rgba(45, 212, 191, 0.12);
+  transform: translateZ(-40px);
+  animation-duration: 40s;
+}
+.tunnel-4 {
+  width: 100vmin; height: 100vmin;
+  margin: -50vmin 0 0 -50vmin;
+  border-color: rgba(100, 140, 255, 0.08);
+  transform: translateZ(-120px);
+  animation-duration: 55s;
+  animation-direction: reverse;
+}
+.tunnel-5 {
+  width: 130vmin; height: 130vmin;
+  margin: -65vmin 0 0 -65vmin;
+  border-color: rgba(212, 175, 55, 0.05);
+  transform: translateZ(-220px);
+  animation-duration: 70s;
+}
+
+@keyframes tunnel-spin {
+  from { transform: translateZ(var(--z, 0)) rotateZ(0deg); }
+  to   { transform: translateZ(var(--z, 0)) rotateZ(360deg); }
+}
+
+/* Fix transform conflict: set --z per ring via separate keyframes */
+.tunnel-1 { --z: 80px; animation-name: spin-z1; }
+.tunnel-2 { --z: 20px; animation-name: spin-z2; }
+.tunnel-3 { --z: -40px; animation-name: spin-z3; }
+.tunnel-4 { --z: -120px; animation-name: spin-z4; }
+.tunnel-5 { --z: -220px; animation-name: spin-z5; }
+
+@keyframes spin-z1 {
+  from { transform: translateZ(80px) rotateZ(0deg); }
+  to   { transform: translateZ(80px) rotateZ(360deg); }
+}
+@keyframes spin-z2 {
+  from { transform: translateZ(20px) rotateZ(0deg); }
+  to   { transform: translateZ(20px) rotateZ(-360deg); }
+}
+@keyframes spin-z3 {
+  from { transform: translateZ(-40px) rotateZ(0deg); }
+  to   { transform: translateZ(-40px) rotateZ(360deg); }
+}
+@keyframes spin-z4 {
+  from { transform: translateZ(-120px) rotateZ(0deg); }
+  to   { transform: translateZ(-120px) rotateZ(-360deg); }
+}
+@keyframes spin-z5 {
+  from { transform: translateZ(-220px) rotateZ(0deg); }
+  to   { transform: translateZ(-220px) rotateZ(360deg); }
+}
+
+/* Perspective grid plane */
+.net-grid {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 160vmin;
+  height: 160vmin;
+  margin: -80vmin 0 0 -80vmin;
+  background-image:
+    linear-gradient(rgba(212, 175, 55, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(212, 175, 55, 0.05) 1px, transparent 1px);
+  background-size: 8vmin 8vmin;
+  transform: rotateX(68deg) translateZ(-180px);
+  mask-image: radial-gradient(ellipse 55% 55% at 50% 50%, black 10%, transparent 70%);
+  -webkit-mask-image: radial-gradient(ellipse 55% 55% at 50% 50%, black 10%, transparent 70%);
+  opacity: 0.7;
+  animation: grid-pulse 8s ease-in-out infinite;
+}
+
+@keyframes grid-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.75; }
+}
+
+/* Proxy nodes */
+.node {
+  position: absolute;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow:
+    0 0 12px var(--gold-glow),
+    0 0 28px rgba(212, 175, 55, 0.25);
+  transform-style: preserve-3d;
+  animation: node-float 6s ease-in-out infinite;
+}
+
+.node::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  animation: node-ring 3s ease-out infinite;
+}
+
+.n1 { top: 38%; left: 28%; animation-delay: 0s; transform: translateZ(60px); }
+.n2 { top: 52%; left: 68%; animation-delay: 0.8s; background: var(--teal); box-shadow: 0 0 12px rgba(45,212,191,0.5), 0 0 28px rgba(45,212,191,0.2); transform: translateZ(40px); }
+.n3 { top: 62%; left: 42%; animation-delay: 1.4s; transform: translateZ(20px); }
+.n4 { top: 32%; left: 58%; animation-delay: 2s; background: var(--teal); box-shadow: 0 0 12px rgba(45,212,191,0.5), 0 0 28px rgba(45,212,191,0.2); transform: translateZ(70px); }
+.n5 { top: 48%; left: 18%; animation-delay: 2.6s; transform: translateZ(10px); }
+.n6 { top: 70%; left: 62%; animation-delay: 1.1s; transform: translateZ(50px); }
+
+.n2::after, .n4::after { border-color: rgba(45, 212, 191, 0.4); }
+
+@keyframes node-float {
+  0%, 100% { opacity: 0.7; filter: brightness(1); }
+  50% { opacity: 1; filter: brightness(1.3); }
+}
+@keyframes node-ring {
+  0% { transform: scale(0.6); opacity: 0.8; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* Soft light beams */
+.beam {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 45vmin;
+  margin-left: -1px;
+  background: linear-gradient(to bottom, transparent, rgba(212, 175, 55, 0.12), transparent);
+  transform-origin: top center;
+  opacity: 0.6;
+}
+.beam-1 {
+  transform: translateZ(30px) rotateZ(25deg);
+  animation: beam-sweep 14s ease-in-out infinite;
+}
+.beam-2 {
+  transform: translateZ(10px) rotateZ(-40deg);
+  background: linear-gradient(to bottom, transparent, rgba(45, 212, 191, 0.1), transparent);
+  animation: beam-sweep 18s ease-in-out infinite reverse;
+}
+
+@keyframes beam-sweep {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.7; }
+}
+
+/* Reduced motion: freeze scene */
+.scene-3d.reduced .tunnel,
+.scene-3d.reduced .net-grid,
+.scene-3d.reduced .node,
+.scene-3d.reduced .node::after,
+.scene-3d.reduced .beam {
+  animation: none !important;
+}
+.scene-3d.reduced .node::after { display: none; }
+
+/* Ensure UI stays above the scene */
+.app-root,
+.toast,
+.modal-backdrop,
+.cart-bar,
+.mobile-nav,
+.mobile-bar {
+  position: relative;
+  z-index: 1;
+}
+.modal-backdrop { z-index: 100; }
+.toast { z-index: 999; }
+.cart-bar { z-index: 90; }
+.mobile-nav { z-index: 50; }
+.mobile-bar { z-index: 40; }
+
+/* Soften old body gradients so 3D scene is visible */
+body::before {
+  opacity: 0.55;
+}
+body::after {
+  opacity: 0.02;
+}
+
+/* Login page also benefits from scene if present; keep its own rings as fallback */
+.login-body .scene-3d {
+  opacity: 0.85;
+}
