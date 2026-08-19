@@ -68,12 +68,13 @@ def _login_html(error: str = "") -> str:
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<meta name="theme-color" content="#0a1628"/>
+<meta name="theme-color" content="#060b14"/>
+<meta name="color-scheme" content="dark"/>
 <title>ورود · خوشبخت</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet"/>
-<link rel="stylesheet" href="/panel/static/style.css"/>
+<link rel="stylesheet" href="/panel/static/style.css?v=20260819v2"/>
 </head>
 <body class="login-body">
   <div class="login-card">
@@ -183,7 +184,7 @@ _MINIAPP_HTML = """<!DOCTYPE html>
   * { box-sizing: border-box; }
   body {
     margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    background: #070f1a; color: #e8eef6; font-family: "Vazirmatn", Tahoma, sans-serif;
+    background: #060b14; color: #e8eef6; font-family: "Vazirmatn", Tahoma, sans-serif;
     text-align: center; padding: 24px;
   }
   .box { max-width: 320px; }
@@ -225,8 +226,8 @@ _MINIAPP_HTML = """<!DOCTYPE html>
   try {
     tg.ready();
     tg.expand();
-    tg.setHeaderColor("#070f1a");
-    tg.setBackgroundColor("#070f1a");
+    tg.setHeaderColor("#060b14");
+    tg.setBackgroundColor("#060b14");
   } catch (e) { /* نسخه‌های قدیمی کلاینت تلگرام ممکنه این متدها رو نداشته باشن */ }
 
   fetch("/api/auth/webapp", {
