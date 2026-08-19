@@ -1,35 +1,35 @@
-# بازطراحی ظاهری پنل خوشبخت (Visual Redesign)
+# بازطراحی حرفه‌ای سه‌بعدی — خوشبخت (v3)
 
-## خلاصه تغییرات
-فقط **ظاهر** تغییر کرده. هیچ قابلیت، API، کلاس CSS یا منطق JS حذف/عوض نشده.
+الهام‌گرفته از استایل‌های premium در [Lapa Ninja](https://www.lapa.ninja) و [Recent Design](https://recent.design)
 
-### فایل‌های تغییر یافته
-| فایل | تغییر |
-|------|--------|
-| `static/style.css` | سیستم طراحی جدید (Glassmorphism + Dark Tech) |
-| `static/panel.html` | theme-color + cache-bust |
-| `panel_pages.py` | theme-color صفحه لاگین + رنگ مینی‌اپ |
+## چه چیزی عوض شده؟
 
-`app.js` و بقیه فایل‌ها **دست نخورده** باقی مانده‌اند.
+### ظاهر (فقط CSS + theme)
+- **Glassmorphism عمیق** با blur + saturate
+- **افکت سه‌بعدی CSS**: `translateY` + `rotateX` روی کارت‌ها، لیست‌ها و statها
+- **سایه‌های لایه‌ای** (depth shadow) مثل داشبوردهای Awwwards
+- **نور محیطی حجمی** (radial gradients طلایی/تیل/آبی)
+- **noise texture** خیلی ملایم برای حس premium
+- **مودال** با انیمیشن ورود سه‌بعدی
+- **دکمه‌ها** با inset highlight و glow قوی‌تر
+- **hover** نرم و شناور روی همه عناصر تعاملی
 
-### Design System (بر اساس UI/UX Pro Max)
-- **Style**: Glassmorphism (دارک)
-- **رنگ اصلی**: طلایی برند `#d4af37` حفظ شده
-- **پس‌زمینه**: عمیق‌تر (`#060b14`) با گرادیان محیطی طلایی/تیل
-- **سطح‌ها**: شیشه‌ای با `backdrop-filter: blur`
-- **تایپوگرافی**: Vazirmatn + JetBrains Mono (بدون تغییر)
-- **موشن**: transition نرم + احترام به `prefers-reduced-motion`
-- **دسترسی‌پذیری**: focus-visible، کنتراست بهتر، cursor-pointer روی کلیک‌پذیرها
+### حفظ شده
+- تمام کلاس‌های CSS
+- تمام منطق `app.js`
+- تمام APIها و قابلیت‌ها
+- RTL و موبایل
 
-### نحوه اعمال
-1. فایل‌های زیر را جایگزین کن:
-   - `static/style.css`
-   - `static/panel.html`
-   - `panel_pages.py`
-2. دیپلوی مجدد روی Railway
-3. Hard refresh مرورگر (Ctrl+Shift+R) برای پاک کردن کش CSS
+### ربات تلگرام
+ربات تلگرام UI خودش را دارد و قابل بازطراحی بصری کامل نیست.
+فقط متن دکمه‌ها و پیام‌ها قابل تغییر است (در صورت نیاز بگو).
 
-### نکات
-- تمام کلاس‌های موجود (`list-item`, `stat-card`, `btn`, `modal`, ...) حفظ شده‌اند.
-- موبایل و RTL کاملاً پشتیبانی می‌شوند.
-- مینی‌اپ تلگرام از همان استایل استفاده می‌کند.
+### مینی‌اپ
+همان پنل است — با theme-color و رنگ پس‌زمینه هماهنگ با طراحی جدید.
+
+## فایل‌ها برای جایگزینی
+1. `static/style.css`
+2. `static/panel.html`
+3. `panel_pages.py`
+
+بعد از دیپلوی: Hard Refresh (`Ctrl+Shift+R`)

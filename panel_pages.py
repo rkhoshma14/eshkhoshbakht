@@ -68,13 +68,13 @@ def _login_html(error: str = "") -> str:
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<meta name="theme-color" content="#060b14"/>
+<meta name="theme-color" content="#05080f"/>
 <meta name="color-scheme" content="dark"/>
 <title>ورود · خوشبخت</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Vazirmatn:wght@400;500;600;700&display=swap" rel="stylesheet"/>
-<link rel="stylesheet" href="/panel/static/style.css?v=20260819v2"/>
+<link rel="stylesheet" href="/panel/static/style.css?v=20260819v3d"/>
 </head>
 <body class="login-body">
   <div class="login-card">
@@ -115,7 +115,7 @@ async def handle_auth_callback(request: web.Request) -> web.Response:
             text=(
                 "<!DOCTYPE html><html lang='fa' dir='rtl'><head><meta charset='utf-8'/>"
                 "<link href='https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700&display=swap' rel='stylesheet'/>"
-                "<style>body{font-family:Vazirmatn,Tahoma,sans-serif;background:#070f1a;color:#e8eef6;"
+                "<style>body{font-family:Vazirmatn,Tahoma,sans-serif;background:#05080f;color:#e8eef6;"
                 "display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center}"
                 "a{color:#d4af37}</style></head><body><div>"
                 "<h2 style='color:#f07178'>ورود ناموفق بود</h2>"
@@ -184,7 +184,7 @@ _MINIAPP_HTML = """<!DOCTYPE html>
   * { box-sizing: border-box; }
   body {
     margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    background: #060b14; color: #e8eef6; font-family: "Vazirmatn", Tahoma, sans-serif;
+    background: #05080f; color: #e8eef6; font-family: "Vazirmatn", Tahoma, sans-serif;
     text-align: center; padding: 24px;
   }
   .box { max-width: 320px; }
@@ -226,8 +226,8 @@ _MINIAPP_HTML = """<!DOCTYPE html>
   try {
     tg.ready();
     tg.expand();
-    tg.setHeaderColor("#060b14");
-    tg.setBackgroundColor("#060b14");
+    tg.setHeaderColor("#05080f");
+    tg.setBackgroundColor("#05080f");
   } catch (e) { /* نسخه‌های قدیمی کلاینت تلگرام ممکنه این متدها رو نداشته باشن */ }
 
   fetch("/api/auth/webapp", {
