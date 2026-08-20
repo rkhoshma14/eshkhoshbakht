@@ -443,14 +443,21 @@ def _resolve_one_item(item: dict, user_id: int, subs_cache: dict) -> tuple[str |
     new_fp = None
 
     # ۱) جستجو با اثرانگشت
+    # اگر چند کانفیگ fp یکسان داشته باشند (دادهٔ قدیمی قبل از لحاظ remark)،
+    # ترجیح با ایندکس ذخیره‌شده است تا Usage و Active قاطی نشوند.
     if fp:
-        for cand in configs:
-            if config_fingerprint(cand) == fp:
-                raw = cand
-                new_fp = fp
-                break
+        matches = [i for i, cand in enumerate(configs) if config_fingerprint(cand) == fp]
+        if len(matches) == 1:
+            raw = configs[matches[0]]
+            new_fp = config_fingerprint(raw)
+        elif len(matches) > 1:
+            if isinstance(idx, int) and idx in matches:
+                raw = configs[idx]
+            else:
+                raw = configs[matches[0]]
+            new_fp = config_fingerprint(raw)
 
-    # ۲) اگر پیدا نشد، از ایندکس استفاده کن (کانفیگ جابه‌جا یا آدرس عوض شده)
+    # ۲) اگر پیدا نشد، از ایندکس استفاده کن (کانفیگ جابه‌جا / remark عوض شده)
     if raw is None and isinstance(idx, int) and 0 <= idx < len(configs):
         raw = configs[idx]
         new_fp = config_fingerprint(raw)

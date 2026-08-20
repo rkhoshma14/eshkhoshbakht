@@ -105,22 +105,33 @@ def rename_config(raw: str, new_name: str) -> str:
 
 
 def config_fingerprint(raw: str) -> str:
-    """شناسه پایدار کانفیگ (بدون remark) برای همگام‌سازی بعد از بروزرسانی منبع."""
+    """شناسه کانفیگ برای همگام‌سازی با منبع.
+
+    host/port/id به‌تنهایی کافی نیست: بعضی ساب‌ها چند نود «اطلاعاتی»
+    با آدرس یکسان (مثلاً 127.0.0.1) و فقط remark متفاوت دارند
+    (مثل Usage و Active). اگر remark در اثرانگشت نباشد، هر دو به
+    یک کانفیگ resolve می‌شوند و اسم‌ها یکی می‌شود.
+
+    remark هم بخشی از اثرانگشت است تا این نودها جدا بمانند.
+    اگر منبع remark را عوض کند (مثلاً عدد مصرف)، fp عوض می‌شود
+    و resolve با fallback روی index به نسخهٔ جدید می‌رسد.
+    """
     proto = get_protocol(raw)
     hp = get_host_port(raw)
     host_port = f"{hp[0]}:{hp[1]}" if hp else ""
+    remark = get_remark(raw) or ""
     if raw.startswith("vmess://"):
         try:
             data = json.loads(_b64decode(raw[len("vmess://"):]))
             uid = data.get("id") or ""
-            return f"vmess|{host_port}|{uid}"
+            return f"vmess|{host_port}|{uid}|{remark}"
         except Exception:
             pass
     try:
         base = raw.split("#", 1)[0]
-        return f"{proto}|{host_port}|{base[-48:]}"
+        return f"{proto}|{host_port}|{base[-48:]}|{remark}"
     except Exception:
-        return f"{proto}|{raw[:64]}"
+        return f"{proto}|{raw[:64]}|{remark}"
 
 
 # ---------- کانفیگ فیک نمایش‌دهنده مدت اعتبار ----------
